@@ -2,7 +2,7 @@
 name = "scope-lineage"
 version = "0.0.1"
 description = "Scope-aware column-level lineage parser for Spark/Hive SQL"
-readme = "../README.md"
+readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "Apache-2.0" }
 keywords = ["sql", "lineage", "spark", "hive", "metadata", "data-engineering"]
@@ -25,7 +25,7 @@ classifiers = [
 scope-lineage = "lineage_parser.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "build>=1"]
+dev = ["pytest>=7", "jsonschema>=4", "build>=1"]
 
 [build-system]
 requires = ["setuptools>=61"]
