@@ -6,6 +6,8 @@ Usage:
 Outputs per-task directory with lineage.json + diagnostics.json (and optionally views/).
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import pathlib

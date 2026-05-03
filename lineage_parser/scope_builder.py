@@ -3,6 +3,8 @@
 Entry point: parse_scope_lineage(sql, task_name, schema=None) -> ScopeLineageResult
 """
 
+from __future__ import annotations
+
 import sqlglot
 from sqlglot import ErrorLevel
 from sqlglot import exp

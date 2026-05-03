@@ -4,6 +4,8 @@ Works on the scope tree built by scope_builder.py. Populates each ScopeData's
 columns, joins, filters, group_by, having, order_by, and depends_on.
 """
 
+from __future__ import annotations
+
 from typing import List, Optional
 
 from sqlglot import exp

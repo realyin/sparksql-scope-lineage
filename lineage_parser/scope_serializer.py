@@ -6,6 +6,8 @@ Converts ScopeLineageResult dataclasses to JSON-safe dicts, handling:
   - SourceRef / ScopeColumn / ScopeData recursive conversion
 """
 
+from __future__ import annotations
+
 import copy as _copy
 import json
 from pathlib import Path
