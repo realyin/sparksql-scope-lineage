@@ -1,15 +1,11 @@
-# Scope Lineage
+# SparkSql Scope Lineage
 
-Scope Lineage is a scope-aware column lineage parser and audit toolkit for
+Sparksql Scope Lineage is a scope-aware column lineage parser and audit toolkit for
 Spark/Hive SQL. It focuses on complex warehouse SQL where column lineage is hard
 to explain: nested CTEs, subqueries, UNION branches, MERGE statements, window
 functions, lateral views, and `SELECT *` expansion with external schema
 metadata.
 
-This repository is being prepared for open source. The parser is usable today,
-but the current workspace may still contain internal validation reports or
-private SQL corpora. See [OPEN_SOURCE_PLAN.md](OPEN_SOURCE_PLAN.md) before
-publishing.
 
 ## Why This Exists
 
