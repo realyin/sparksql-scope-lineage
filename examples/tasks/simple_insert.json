@@ -1,0 +1,4 @@
+{
+  "task_name": "simple_insert",
+  "sql": "INSERT OVERWRITE TABLE mart.user_summary\nWITH active_users AS (\n    SELECT\n        u.id,\n        u.country,\n        u.created_at\n    FROM ods.users u\n    WHERE u.status = 'active'\n)\nSELECT\n    id AS user_id,\n    country,\n    TO_DATE(created_at) AS signup_date\nFROM active_users;"
+}

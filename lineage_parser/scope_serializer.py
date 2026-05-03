@@ -1,0 +1,260 @@
+"""JSON serializer for scope-based lineage results.
+
+Converts ScopeLineageResult dataclasses to JSON-safe dicts, handling:
+  - from_ -> "from" renaming in ScopeGraphEdge
+  - Omitting None / empty default values
+  - SourceRef / ScopeColumn / ScopeData recursive conversion
+"""
+
+import copy as _copy
+import json
+from pathlib import Path
+from typing import Any
+
+from .scope_types import (
+    DiagnosticWarning,
+    Diagnostics,
+    ScopeColumn,
+    ScopeData,
+    ScopeFilter,
+    ScopeGraph,
+    ScopeGraphEdge,
+    ScopeJoin,
+    ScopeLineageResult,
+    SourceRef,
+)
+
+
+_SCHEMA_PATH = Path(__file__).parent / "schemas" / "lineage.schema.json"
+_schema_cache: dict | None = None
+
+
+def _load_schema() -> dict:
+    global _schema_cache
+    if _schema_cache is None:
+        with open(_SCHEMA_PATH, encoding="utf-8") as f:
+            _schema_cache = json.load(f)
+    return _copy.deepcopy(_schema_cache)
+
+
+def validate_lineage_json(result: "ScopeLineageResult") -> dict:
+    """Convert result to dict and validate against JSON Schema. Returns dict on success.
+
+    Raises jsonschema.ValidationError if the output violates the schema.
+    Raises ImportError if jsonschema is not installed.
+    """
+    try:
+        import jsonschema
+    except ImportError:
+        raise ImportError("jsonschema is required: pip install jsonschema")
+    d = to_dict(result)
+    jsonschema.validate(d, _load_schema())
+    return d
+
+
+def validate_cross_references(data: dict) -> list[str]:
+    """Check that all scope IDs in edges and column sources exist in the output.
+
+    Returns a list of error strings (empty list = valid).
+    Physical table nodes are in scope_graph.nodes but not in scopes dict — both are valid targets.
+    UNKNOWN scope is allowed (used when column resolution fails).
+    """
+    errors: list[str] = []
+    known_scopes: set[str] = set(data.get("scopes", {}).keys())
+    all_nodes: set[str] = set(data.get("scope_graph", {}).get("nodes", []))
+    valid_ids = known_scopes | all_nodes
+
+    for edge in data.get("scope_graph", {}).get("edges", []):
+        for key in ("from", "to"):
+            sid = edge.get(key)
+            if sid and sid not in valid_ids:
+                errors.append(f"scope_graph edge {key}={sid!r} not in known scopes/nodes")
+
+    for scope_id, scope_data in data.get("scopes", {}).items():
+        for col in scope_data.get("columns", []):
+            for src in col.get("sources", []):
+                sid = src.get("scope")
+                if sid and sid not in valid_ids and sid != "UNKNOWN":
+                    errors.append(
+                        f"scope={scope_id!r} col={col.get('name')!r} "
+                        f"source scope={sid!r} not in known scopes/nodes"
+                    )
+
+    return errors
+
+
+def to_dict(obj: Any) -> Any:
+    """Recursively convert a dataclass (or nested structure) to a JSON-safe dict.
+
+    - ScopeGraphEdge.from_ -> {"from": ..., "to": ...}
+    - None fields are omitted
+    - Empty lists/dicts are kept (they convey "no entries")
+    """
+    if isinstance(obj, ScopeLineageResult):
+        return _result_to_dict(obj)
+    if isinstance(obj, ScopeData):
+        return _scope_data_to_dict(obj)
+    if isinstance(obj, ScopeColumn):
+        return _scope_column_to_dict(obj)
+    if isinstance(obj, ScopeGraphEdge):
+        return obj.to_dict()
+    if isinstance(obj, ScopeGraph):
+        return _scope_graph_to_dict(obj)
+    if isinstance(obj, SourceRef):
+        return {"scope": obj.scope, "column": obj.column}
+    if isinstance(obj, ScopeJoin):
+        return _scope_join_to_dict(obj)
+    if isinstance(obj, ScopeFilter):
+        return _scope_filter_to_dict(obj)
+    if isinstance(obj, Diagnostics):
+        return _diagnostics_to_dict(obj)
+    if isinstance(obj, DiagnosticWarning):
+        return {"type": obj.type, "scope": obj.scope, "msg": obj.msg}
+    if isinstance(obj, list):
+        return [to_dict(item) for item in obj]
+    if isinstance(obj, dict):
+        return {k: to_dict(v) for k, v in obj.items()}
+    return obj
+
+
+def to_json(result: ScopeLineageResult, indent: int = 2) -> str:
+    """Serialize a ScopeLineageResult to a JSON string."""
+    return json.dumps(to_dict(result), ensure_ascii=False, indent=indent, default=str)
+
+
+def write_output(result: ScopeLineageResult, output_dir: str | Path) -> Path:
+    """Write lineage.json and diagnostics.json to output_dir.
+
+    Returns the output directory path.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        data = validate_lineage_json(result)
+    except ImportError:
+        data = to_dict(result)  # jsonschema not installed — skip validation
+
+    xref_errors = validate_cross_references(data)
+    if xref_errors:
+        raise ValueError(
+            f"Cross-reference validation failed ({len(xref_errors)} errors):\n"
+            + "\n".join(xref_errors[:5])
+        )
+
+    # Write full lineage
+    lineage_path = output_dir / "lineage.json"
+    with open(lineage_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+
+    # Write diagnostics separately
+    diag_path = output_dir / "diagnostics.json"
+    with open(diag_path, "w", encoding="utf-8") as f:
+        json.dump(data.get("diagnostics", {}), f, ensure_ascii=False, indent=2, default=str)
+
+    return output_dir
+
+
+# -- internal converters ---------------------------------------------------
+
+
+def _result_to_dict(r: ScopeLineageResult) -> dict:
+    d = {
+        "task_id": r.task_id,
+        "target_table": r.target_table,
+        "stmt_kind": r.stmt_kind,
+        "source_tables": r.source_tables,
+        "scope_graph": to_dict(r.scope_graph),
+        "scopes": {k: to_dict(v) for k, v in r.scopes.items()},
+        "diagnostics": to_dict(r.diagnostics),
+    }
+    return d
+
+
+def _scope_data_to_dict(sd: ScopeData) -> dict:
+    d: dict[str, Any] = {"kind": sd.kind}
+    if sd.role is not None:
+        d["role"] = sd.role
+    d["depends_on"] = sd.depends_on if sd.depends_on else []
+    if sd.writes_to is not None:
+        d["writes_to"] = sd.writes_to
+    if sd.alias_in_parent is not None:
+        d["alias_in_parent"] = sd.alias_in_parent
+    d["columns"] = [to_dict(c) for c in sd.columns] if sd.columns else []
+    if sd.joins:
+        d["joins"] = [to_dict(j) for j in sd.joins]
+    if sd.filters:
+        d["filters"] = [to_dict(f) for f in sd.filters]
+    if sd.group_by:
+        d["group_by"] = [to_dict(g) for g in sd.group_by]
+    if sd.having:
+        d["having"] = [to_dict(h) for h in sd.having]
+    if sd.order_by:
+        d["order_by"] = sd.order_by
+    if sd.set_op is not None:
+        d["set_op"] = sd.set_op
+    if sd.branches is not None:
+        d["branches"] = sd.branches
+    if sd.branch_index is not None:
+        d["branch_index"] = sd.branch_index
+    return d
+
+
+def _scope_column_to_dict(c: ScopeColumn) -> dict:
+    d: dict[str, Any] = {"name": c.name, "transform": c.transform}
+    if c.transform_subkind is not None:
+        d["transform_subkind"] = c.transform_subkind
+    if c.expression is not None:
+        d["expression"] = c.expression
+    d["sources"] = [to_dict(s) for s in c.sources] if c.sources else []
+    if c.case_branches is not None:
+        d["case_branches"] = c.case_branches
+    if c.window is not None:
+        d["window"] = c.window
+    if c.agg_function is not None:
+        d["agg_function"] = c.agg_function
+    if c.branches is not None:
+        d["branches"] = c.branches
+    if c.merge_branch is not None:
+        d["merge_branch"] = c.merge_branch
+    return d
+
+
+def _scope_graph_to_dict(g: ScopeGraph) -> dict:
+    return {
+        "nodes": g.nodes,
+        "edges": [e.to_dict() for e in g.edges] if g.edges else [],
+    }
+
+
+def _scope_filter_to_dict(f: ScopeFilter) -> dict:
+    d: dict[str, Any] = {"expression": f.expression}
+    if f.columns:
+        d["columns"] = [to_dict(c) for c in f.columns]
+    return d
+
+
+def _diagnostics_to_dict(d: Diagnostics) -> dict:
+    result: dict[str, Any] = {}
+    if d.fallback_used:
+        result["fallback_used"] = d.fallback_used
+    if d.warnings:
+        result["warnings"] = [to_dict(w) for w in d.warnings]
+    if d.stats:
+        result["stats"] = d.stats
+    return result
+
+
+def _scope_join_to_dict(j: ScopeJoin) -> dict:
+    d: dict[str, Any] = {
+        "join_type": j.join_type,
+        "left_scope": j.left_scope,
+        "right_scope": j.right_scope,
+    }
+    if j.alias_in_parent is not None:
+        d["alias_in_parent"] = j.alias_in_parent
+    if j.condition_expression is not None:
+        d["condition_expression"] = j.condition_expression
+    if j.condition_columns:
+        d["condition_columns"] = [to_dict(c) for c in j.condition_columns]
+    return d

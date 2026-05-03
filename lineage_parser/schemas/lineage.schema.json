@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FieldLineage",
+  "type": "object",
+  "required": ["task_id", "target_table", "stmt_kind", "scopes", "scope_graph"],
+  "additionalProperties": true,
+  "properties": {
+    "task_id":       { "type": "string", "minLength": 1 },
+    "target_table":  { "type": "string", "minLength": 1 },
+    "stmt_kind":     {
+      "type": "string",
+      "enum": ["INSERT_OVERWRITE", "INSERT", "CTAS", "MERGE", "UPDATE", "DELETE", "UNKNOWN"]
+    },
+    "source_tables": { "type": "array", "items": { "type": "string" } },
+    "partition_columns": { "type": "array", "items": { "type": "string" } },
+    "scope_graph": {
+      "type": "object",
+      "required": ["nodes", "edges"],
+      "properties": {
+        "nodes": { "type": "array" },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to"],
+            "properties": {
+              "from": { "type": "string" },
+              "to":   { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "scopes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["kind", "columns", "depends_on"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["physical_table", "cte", "subquery", "union", "union_branch", "root"]
+          },
+          "depends_on": { "type": "array", "items": { "type": "string" } },
+          "columns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "transform", "sources"],
+              "properties": {
+                "name":      { "type": "string", "minLength": 1 },
+                "transform": {
+                  "type": "string",
+                  "enum": ["DIRECT", "EXPRESSION", "AGGREGATE", "WINDOW",
+                           "CONDITIONAL", "CONSTANT", "UNION", "EXPAND_ALL"]
+                },
+                "sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["scope", "column"],
+                    "properties": {
+                      "scope":  { "type": "string" },
+                      "column": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "properties": {
+        "fallback_used": { "type": "boolean" },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type", "scope", "msg"],
+            "properties": {
+              "type":  { "type": "string" },
+              "scope": { "type": "string" },
+              "msg":   { "type": "string" }
+            }
+          }
+        },
+        "stats": { "type": "object" }
+      }
+    }
+  }
+}

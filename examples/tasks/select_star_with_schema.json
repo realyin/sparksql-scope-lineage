@@ -1,0 +1,4 @@
+{
+  "task_name": "select_star_with_schema",
+  "sql": "INSERT OVERWRITE TABLE mart.user_snapshot\nSELECT\n    s.*\nFROM ods.users s\nWHERE s.dt = '2026-01-01';"
+}
