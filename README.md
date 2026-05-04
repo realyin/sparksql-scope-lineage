@@ -1,5 +1,7 @@
 # sparksql-scope-lineage
 
+[中文](README.zh-CN.md) | English
+
 Scope-aware column-level lineage for Spark SQL and Hive-style warehouse SQL.
 
 `sparksql-scope-lineage` parses SQL statically, keeps intermediate query scopes

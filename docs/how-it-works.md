@@ -1,5 +1,7 @@
 # How It Works
 
+[中文](how-it-works.zh-CN.md) | English
+
 This document explains the main design choices behind Scope Lineage.
 
 ## 1. Scope First, Physical Lineage Later
@@ -144,4 +146,3 @@ Static SQL lineage has unavoidable uncertainty:
 
 Scope Lineage treats those as first-class diagnostics. A partial but explicit
 result is usually more useful than a confident-looking but silent guess.
-
