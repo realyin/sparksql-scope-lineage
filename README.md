@@ -134,6 +134,30 @@ The audit report classifies generated output as:
 | YELLOW | usable output with known accuracy or completeness boundaries |
 | GREEN | no structural issues or significant warnings |
 
+### Compare Two Output Directories
+
+Use this before and after parser changes to check whether generated artifacts
+changed:
+
+```bash
+python tools/compare_scope_outputs.py \
+  --left /tmp/scope-output-before/tasks \
+  --right /tmp/scope-output-after/tasks \
+  --report /tmp/scope-compare.md \
+  --json /tmp/scope-compare.json \
+  --fail-on-diff
+```
+
+### Summarize Multiple Audit Reports
+
+```bash
+python tools/summarize_audit_reports.py \
+  --audit /tmp/dwd-audit.json \
+  --audit /tmp/support-audit.json \
+  --report /tmp/scope-audit-summary.md \
+  --json /tmp/scope-audit-summary.json
+```
+
 ## Output Files
 
 Each parsed statement can produce:
