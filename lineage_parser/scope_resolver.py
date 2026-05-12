@@ -486,6 +486,10 @@ def _resolve_column_ref(
 
     if table_alias:
         # Qualified: t1.col
+        duplicate_src = _resolve_duplicate_alias_ref(table_alias, col_name, sg_scope, result, schema)
+        if duplicate_src is not None:
+            return duplicate_src
+
         src = sg_scope.sources.get(table_alias)
         if isinstance(src, Scope):
             upstream_id = getattr(src, _SCOPE_ID_ATTR, None)
@@ -720,6 +724,161 @@ def _resolve_unqualified(
         msg=f"Column '{col_name}' not found in any source",
     ))
     return SourceRef(scope="UNKNOWN", column=col_name)
+
+
+def _resolve_duplicate_alias_ref(
+    table_alias: str,
+    col_name: str,
+    sg_scope: Scope,
+    result: ScopeLineageResult,
+    schema: dict | None = None,
+) -> SourceRef | None:
+    """Resolve qualified references when one SELECT reuses the same alias.
+
+    ``sqlglot`` stores sources in a dict. If the same alias appears twice in the
+    same FROM/JOIN list, that dict can only keep one binding. For lineage, a
+    silent overwrite is worse than an explicit diagnostic, so we inspect the
+    SELECT's FROM/JOIN AST in order and disambiguate by known output columns or
+    schema metadata.
+    """
+    candidates = [
+        (alias, source)
+        for alias, source in _iter_select_sources_in_order(sg_scope)
+        if alias == table_alias
+    ]
+    if len(candidates) <= 1:
+        return None
+
+    scope_id = getattr(sg_scope, _SCOPE_ID_ATTR, "UNKNOWN")
+    states = [
+        (alias, source, _source_column_state(alias, source, col_name, result, schema))
+        for alias, source in candidates
+    ]
+    exact = [(alias, source) for alias, source, state in states if state == "present"]
+    possible = [(alias, source) for alias, source, state in states if state == "unknown"]
+
+    selected: tuple[str, Scope | exp.Table] | None = None
+    reason = ""
+    if len(exact) == 1:
+        selected = exact[0]
+        reason = "matched the only source with this output column"
+    elif not exact and len(possible) == 1:
+        selected = possible[0]
+        reason = "only one duplicate source could still contain the column"
+    elif len(exact) > 1:
+        selected = exact[0]
+        reason = "multiple duplicate sources expose the column; using the first one"
+
+    result.diagnostics.warnings.append(DiagnosticWarning(
+        type="duplicate_alias",
+        scope=scope_id,
+        msg=(
+            f"Alias '{table_alias}' is used {len(candidates)} times in the same SELECT. "
+            f"Column '{col_name}' "
+            f"{('was resolved because it ' + reason) if reason else 'could not be disambiguated'}."
+        ),
+    ))
+
+    if selected is None:
+        return SourceRef(scope="UNKNOWN", column=col_name)
+    _alias, source = selected
+    return _source_ref_for_source(_alias, source, col_name, result)
+
+
+def _iter_select_sources_in_order(sg_scope: Scope) -> list[tuple[str, Scope | exp.Table]]:
+    """Return SELECT FROM/JOIN sources in SQL order, preserving duplicate aliases."""
+    expr = sg_scope.expression
+    if not isinstance(expr, exp.Select):
+        return []
+
+    items: list[tuple[str, Scope | exp.Table]] = []
+    from_ = expr.args.get("from_")
+    if from_ is not None:
+        source = getattr(from_, "this", None)
+        item = _source_item_from_ast_node(source, sg_scope)
+        if item:
+            items.append(item)
+    for join in expr.args.get("joins") or []:
+        item = _source_item_from_ast_node(join.this, sg_scope)
+        if item:
+            items.append(item)
+    return items
+
+
+def _source_item_from_ast_node(
+    node: exp.Expression | None,
+    sg_scope: Scope,
+) -> tuple[str, Scope | exp.Table] | None:
+    if node is None:
+        return None
+    alias = node.alias if isinstance(node, (exp.Table, exp.Subquery)) else None
+    source: Scope | exp.Table | None = None
+    if isinstance(node, exp.Table):
+        # A table reference may actually name a CTE; resolve that through the
+        # scope source map by table name. Physical tables can be used directly.
+        named_source = sg_scope.sources.get(node.name)
+        if isinstance(named_source, Scope):
+            source = named_source
+        else:
+            source = node
+        alias = alias or node.name
+    elif isinstance(node, exp.Subquery):
+        if alias:
+            mapped = sg_scope.sources.get(alias)
+            if isinstance(mapped, Scope):
+                source = mapped
+            else:
+                for sub_scope in getattr(sg_scope, "subquery_scopes", []) or []:
+                    if sub_scope.expression is node.this:
+                        source = sub_scope
+                        break
+    if alias and source is not None:
+        return alias, source
+    return None
+
+
+def _source_column_state(
+    alias: str,
+    source: Scope | exp.Table,
+    col_name: str,
+    result: ScopeLineageResult,
+    schema: dict | None,
+) -> str:
+    """Return present/absent/unknown for whether source can expose col_name."""
+    if isinstance(source, Scope):
+        upstream_id = _source_scope_id(alias, source, result)
+        upstream_sd = result.scopes.get(upstream_id) if upstream_id else None
+        if upstream_sd:
+            names = {col.name for col in upstream_sd.columns}
+            if col_name in names or "*" in names:
+                return "present"
+            return "absent"
+        inner_expr = source.expression
+        if isinstance(inner_expr, exp.Select):
+            if col_name in inner_expr.named_selects or _select_has_star_projection(inner_expr):
+                return "present"
+            return "absent"
+        return "unknown"
+
+    fq = _qualified_table(source)
+    if schema:
+        norm = _normalize_table_name(fq)
+        return "present" if col_name in schema.get(norm, []) else "absent"
+    return "unknown"
+
+
+def _source_ref_for_source(
+    alias: str,
+    source: Scope | exp.Table,
+    col_name: str,
+    result: ScopeLineageResult,
+) -> SourceRef:
+    if isinstance(source, Scope):
+        upstream_id = _source_scope_id(alias, source, result)
+        if upstream_id:
+            return SourceRef(scope=upstream_id, column=col_name)
+        return SourceRef(scope="UNKNOWN", column=col_name)
+    return SourceRef(scope=_qualified_table(source), column=col_name)
 
 
 def _source_scope_id(alias: str, source: Scope, result: ScopeLineageResult) -> str | None:
@@ -1300,12 +1459,12 @@ def _resolve_join(
 
 def _resolve_table_to_scope_id(table_node: exp.Expression, sg_scope: Scope) -> str | None:
     """Resolve a Table or Subquery node to its scope_id."""
-    alias = table_node.alias if isinstance(table_node, (exp.Table, exp.Subquery)) else None
-    if alias:
-        src = sg_scope.sources.get(alias)
+    item = _source_item_from_ast_node(table_node, sg_scope)
+    if item:
+        alias, src = item
         if isinstance(src, Scope):
             return getattr(src, _SCOPE_ID_ATTR, None)
-        elif isinstance(src, exp.Table):
+        if isinstance(src, exp.Table):
             return _qualified_table(src)
     if isinstance(table_node, exp.Table):
         return _qualified_table(table_node)

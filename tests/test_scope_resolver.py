@@ -236,6 +236,61 @@ class TestJoinResolution:
         assert set(self.result.scopes["ROOT"].depends_on) == {"ods.t1", "ods.t2"}
 
 
+class TestDuplicateAliasResolution:
+    """Duplicate aliases should not silently overwrite earlier sources."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.result = parse_scope_lineage(
+            "WITH dim_clct_misc AS ("
+            "  SELECT misc_type, misc_val, misc_val_desc "
+            "  FROM hw_jhy_iceberg.dim.dim_clct_misc_dc"
+            ") "
+            "INSERT OVERWRITE TABLE dwd.dwd_clct_stop_call_det_df "
+            "SELECT b.unique_id AS unique_id, "
+            "       b.misc_val_desc AS contact_rel_desc, "
+            "       b.app_code AS app_cd "
+            "FROM ods.ods_clct_prod_aux1_stop_dial_record_df a "
+            "JOIN ods.ods_appserver_user_info_df b "
+            "  ON a.customercode = b.open_id "
+            " AND b.unique_id IS NOT NULL "
+            " AND b.dt = '20260512' "
+            "LEFT JOIN dim_clct_misc b "
+            "  ON a.relationship = b.misc_val "
+            " AND b.misc_type = 'relations'",
+            "test_duplicate_alias_resolution",
+        )
+
+    def test_qualified_columns_disambiguate_duplicate_alias_by_column_presence(self):
+        root = self.result.scopes["ROOT"]
+        by_name = {col.name: col for col in root.columns}
+
+        assert by_name["unique_id"].sources == [
+            SourceRef(scope="ods.ods_appserver_user_info_df", column="unique_id")
+        ]
+        assert by_name["app_cd"].sources == [
+            SourceRef(scope="ods.ods_appserver_user_info_df", column="app_code")
+        ]
+        assert by_name["contact_rel_desc"].sources == [
+            SourceRef(scope="cte:dim_clct_misc", column="misc_val_desc")
+        ]
+
+    def test_join_conditions_use_the_matching_duplicate_alias_source(self):
+        joins = self.result.scopes["ROOT"].joins
+
+        assert joins[0].right_scope == "ods.ods_appserver_user_info_df"
+        assert SourceRef(scope="ods.ods_appserver_user_info_df", column="open_id") in joins[0].condition_columns
+        assert SourceRef(scope="ods.ods_appserver_user_info_df", column="unique_id") in joins[0].condition_columns
+        assert SourceRef(scope="ods.ods_appserver_user_info_df", column="dt") in joins[0].condition_columns
+
+        assert joins[1].right_scope == "cte:dim_clct_misc"
+        assert SourceRef(scope="cte:dim_clct_misc", column="misc_val") in joins[1].condition_columns
+        assert SourceRef(scope="cte:dim_clct_misc", column="misc_type") in joins[1].condition_columns
+
+    def test_duplicate_alias_warning_is_emitted(self):
+        assert any(w.type == "duplicate_alias" for w in self.result.diagnostics.warnings)
+
+
 class TestWhereFilter:
     """WHERE clause: columns resolved."""
 
