@@ -20,6 +20,7 @@ from .parser import (
     _collect_cte_map,
 )
 from .scope_types import (
+    CONSTANT_SCOPE_ID,
     SourceRef,
     ScopeColumn,
     ScopeData,
@@ -40,6 +41,16 @@ _KNOWN_UDAFS = frozenset({
     "COLLECT_SET", "COLLECT_LIST", "CONCAT_WS", "PERCENTILE",
     "PERCENTILE_APPROX", "HISTOGRAM_NUMERIC", "NVL",
 })
+
+
+def _constant_sources(expression: str | None) -> list[SourceRef]:
+    """Represent a literal as a traceable leaf instead of an empty lineage edge."""
+    literal = expression if expression else "<constant>"
+    return [SourceRef(scope=CONSTANT_SCOPE_ID, column=literal)]
+
+
+def _is_dependency_scope(scope_id: str | None) -> bool:
+    return bool(scope_id and scope_id not in {"UNKNOWN", CONSTANT_SCOPE_ID})
 
 
 def resolve_all(
@@ -184,7 +195,7 @@ def _resolve_values_scope(
             name=name,
             transform=transform,
             expression=expression,
-            sources=[],
+            sources=_constant_sources(expression) if transform == "CONSTANT" else [],
         ))
 
 
@@ -253,7 +264,14 @@ def _resolve_projection(
 
     # Handle CONSTANT
     if transform == "CONSTANT":
-        return [ScopeColumn(name=name, transform="CONSTANT", expression=expression, sources=[])]
+        return [
+            ScopeColumn(
+                name=name,
+                transform="CONSTANT",
+                expression=expression,
+                sources=_constant_sources(expression),
+            )
+        ]
 
     # Find all Column references and resolve them
     sources = _resolve_column_refs_in_expr(inner, sg_scope, result, schema)
@@ -1626,34 +1644,34 @@ def _build_depends_on_and_graph(result: ScopeLineageResult) -> None:
 
         for col in scope_data.columns:
             for src in col.sources:
-                if src.scope and src.scope != "UNKNOWN":
+                if _is_dependency_scope(src.scope):
                     referenced.add(src.scope)
 
         for join in scope_data.joins:
-            if join.left_scope and join.left_scope != "UNKNOWN":
+            if _is_dependency_scope(join.left_scope):
                 referenced.add(join.left_scope)
-            if join.right_scope and join.right_scope != "UNKNOWN":
+            if _is_dependency_scope(join.right_scope):
                 referenced.add(join.right_scope)
             for cc in join.condition_columns:
-                if cc.scope and cc.scope != "UNKNOWN":
+                if _is_dependency_scope(cc.scope):
                     referenced.add(cc.scope)
 
         for f in scope_data.filters:
             for c in f.columns:
-                if c.scope and c.scope != "UNKNOWN":
+                if _is_dependency_scope(c.scope):
                     referenced.add(c.scope)
 
         for g in scope_data.group_by:
-            if g.scope and g.scope != "UNKNOWN":
+            if _is_dependency_scope(g.scope):
                 referenced.add(g.scope)
 
         for h in scope_data.having:
             for c in h.columns:
-                if c.scope and c.scope != "UNKNOWN":
+                if _is_dependency_scope(c.scope):
                     referenced.add(c.scope)
 
         for o in scope_data.order_by:
-            if o.get("scope") and o["scope"] != "UNKNOWN":
+            if _is_dependency_scope(o.get("scope")):
                 referenced.add(o["scope"])
 
         # Remove self-reference

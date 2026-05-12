@@ -51,6 +51,13 @@ class TestColumnNodeId:
     def test_with_suffix(self):
         assert column_node_id("ROOT", "name", "matched") == "ROOT__name__matched"
 
+    def test_avoids_unicode_collisions(self):
+        first = column_node_id("CONSTANT", "'已使用的量'")
+        second = column_node_id("CONSTANT", "'已失效的量'")
+        assert first != second
+        assert first.startswith("CONSTANT__")
+        assert second.startswith("CONSTANT__")
+
 
 class TestMermaidEscape:
     def test_quotes_escaped(self):

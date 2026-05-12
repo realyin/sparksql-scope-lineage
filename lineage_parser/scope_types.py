@@ -9,6 +9,9 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 
+CONSTANT_SCOPE_ID = "CONSTANT"
+
+
 @dataclass
 class SourceRef:
     """A reference from a column to an upstream scope + column."""

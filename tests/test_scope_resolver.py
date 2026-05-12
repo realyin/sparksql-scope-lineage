@@ -3,7 +3,8 @@
 import pytest
 
 from lineage_parser.scope_builder import parse_scope_lineage
-from lineage_parser.scope_types import ScopeColumn, SourceRef
+from lineage_parser.scope_types import CONSTANT_SCOPE_ID, ScopeColumn, SourceRef
+from lineage_parser.scope_views import trace_to_physical
 
 
 class TestSimpleDirect:
@@ -404,7 +405,7 @@ class TestConditionalCaseWhen:
 
 
 class TestConstantColumn:
-    """CONSTANT transform: literal values have no sources."""
+    """CONSTANT transform: literal values are represented as traceable leaves."""
 
     @pytest.fixture(autouse=True)
     def setup(self):
@@ -417,13 +418,44 @@ class TestConstantColumn:
         root = self.result.scopes["ROOT"]
         one_col = [c for c in root.columns if c.name == "one"][0]
         assert one_col.transform == "CONSTANT"
-        assert one_col.sources == []
+        assert one_col.sources == [SourceRef(scope=CONSTANT_SCOPE_ID, column="1")]
 
     def test_mixed_with_direct(self):
         root = self.result.scopes["ROOT"]
         id_col = [c for c in root.columns if c.name == "id"][0]
         assert id_col.transform == "DIRECT"
         assert len(id_col.sources) == 1
+
+
+class TestUnionConstantBranchLineage:
+    """UNION constants should not look like empty upstream lineage."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.result = parse_scope_lineage(
+            "INSERT INTO mart.t "
+            "SELECT 'total' AS metric, '-' AS create_name, a.id FROM ods.a a "
+            "UNION ALL "
+            "SELECT 'used' AS metric, b.create_name, b.id FROM ods.b b",
+            "test_union_constants",
+        )
+
+    def test_constant_union_branch_has_literal_source(self):
+        b01 = self.result.scopes["union:main:b01"]
+        metric = [c for c in b01.columns if c.name == "metric"][0]
+        create_name = [c for c in b01.columns if c.name == "create_name"][0]
+
+        assert metric.sources == [SourceRef(scope=CONSTANT_SCOPE_ID, column="'total'")]
+        assert create_name.sources == [SourceRef(scope=CONSTANT_SCOPE_ID, column="'-'")]
+
+    def test_union_traces_to_constants_and_physical_sources(self):
+        metric_sources = trace_to_physical(self.result, "ROOT", "metric")
+        create_name_sources = trace_to_physical(self.result, "ROOT", "create_name")
+
+        assert (CONSTANT_SCOPE_ID, "'total'", "UNION") in metric_sources
+        assert (CONSTANT_SCOPE_ID, "'used'", "UNION") in metric_sources
+        assert (CONSTANT_SCOPE_ID, "'-'", "UNION") in create_name_sources
+        assert ("ods.b", "create_name", "UNION") in create_name_sources
 
 
 class TestWindowFunction:
