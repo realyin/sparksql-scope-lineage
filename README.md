@@ -47,7 +47,8 @@ Parse one SQL file:
 scope-lineage parse \
   --sql-file examples/simple_insert.sql \
   --out /tmp/scope-lineage-demo \
-  --md
+  --md \
+  --html
 ```
 
 Parse SQL with schema metadata so `SELECT *` can be expanded:
@@ -57,7 +58,8 @@ scope-lineage parse \
   --sql-file examples/select_star_with_schema.sql \
   --schema examples/table_cols.csv \
   --out /tmp/scope-lineage-star-demo \
-  --md
+  --md \
+  --html
 ```
 
 Run the tests:
@@ -94,7 +96,8 @@ for column in root.columns:
 scope-lineage parse \
   --sql-file examples/simple_insert.sql \
   --out /tmp/scope-lineage-demo \
-  --md
+  --md \
+  --html
 ```
 
 ### Parse A Task Directory
@@ -115,7 +118,8 @@ python tools/run_scope_corpus.py \
   --input-dir examples/tasks \
   --out /tmp/scope-output \
   --schema examples/table_cols.csv \
-  --md
+  --md \
+  --html
 ```
 
 ### Audit Generated Output
@@ -167,6 +171,7 @@ Each parsed statement can produce:
 ```text
 lineage.json
 diagnostics.json
+report.html
 lineage.md
 views/
   scope_overview.mmd
@@ -175,8 +180,10 @@ views/
   per_column/*.mmd
 ```
 
-`lineage.json` contains the machine-readable scope graph. Mermaid files are
-intended for visual inspection and debugging.
+`lineage.json` contains the machine-readable scope graph. `report.html` is a
+self-contained offline visual report with a scope DAG, ROOT column table,
+focused field lineage, and diagnostics. Mermaid files are intended for visual
+inspection and debugging.
 
 ## How It Works
 

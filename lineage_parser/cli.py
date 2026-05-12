@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .html_report import write_html_report
 from .schema_metadata import load_schema
 from .scope_builder import parse_all_scope_lineage
 from .scope_serializer import write_output
@@ -21,6 +22,7 @@ def main(argv: list[str] | None = None) -> int:
     parse_cmd.add_argument("--out", required=True, help="Output directory")
     parse_cmd.add_argument("--schema", help="Optional CSV/JSON schema metadata")
     parse_cmd.add_argument("--md", action="store_true", help="Also write Markdown and Mermaid views")
+    parse_cmd.add_argument("--html", action="store_true", help="Also write an offline HTML report")
 
     args = parser.parse_args(argv)
 
@@ -44,6 +46,8 @@ def _parse_file(args: argparse.Namespace) -> int:
         write_output(result, out_dir)
         if args.md:
             write_views(result, out_dir)
+        if args.html:
+            write_html_report(result, out_dir)
 
     print(f"Parsed {len(results)} statement(s) into {out_root}")
     return 0

@@ -18,13 +18,14 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 TASK_INFO = ROOT.parent / "task_info"
 sys.path.insert(0, str(ROOT))
 
-from lineage_parser import load_schema, parse_all_scope_lineage, write_output, write_views  # noqa: E402
+from lineage_parser import load_schema, parse_all_scope_lineage, write_html_report, write_output, write_views  # noqa: E402
 
 
 def run_directory(
     input_dir: pathlib.Path,
     output_dir: pathlib.Path,
     write_md: bool,
+    write_html: bool,
     schema: dict | None = None,
 ) -> tuple:
     stats = {"ok": 0, "error": 0, "empty": 0}
@@ -47,6 +48,8 @@ def run_directory(
                 write_output(result, task_out)
                 if write_md:
                     write_views(result, task_out)
+                if write_html:
+                    write_html_report(result, task_out)
             stats["ok"] += 1
         except Exception as e:
             stats["error"] += 1
@@ -68,6 +71,7 @@ def main():
     )
     parser.add_argument("--out", default="/tmp/scope_v2_output", help="Output root directory")
     parser.add_argument("--md", action="store_true", help="Also generate Markdown + Mermaid views")
+    parser.add_argument("--html", action="store_true", help="Also generate offline HTML reports")
     parser.add_argument(
         "--schema",
         help=(
@@ -88,7 +92,7 @@ def main():
         output_dir = out_root / input_dir.name
         output_dir.mkdir(parents=True, exist_ok=True)
         print(f"Processing {input_dir}...")
-        stats, errors = run_directory(input_dir, output_dir, args.md, schema=schema)
+        stats, errors = run_directory(input_dir, output_dir, args.md, args.html, schema=schema)
         print(f"  ok={stats['ok']}, error={stats['error']}, empty={stats['empty']}")
         err_log = out_root / "errors.json"
         err_log.write_text(json.dumps(errors, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -113,7 +117,7 @@ def main():
         output_dir = out_root / d
         output_dir.mkdir(parents=True, exist_ok=True)
         print(f"Processing {d}...")
-        stats, errors = run_directory(input_dir, output_dir, args.md, schema=schema)
+        stats, errors = run_directory(input_dir, output_dir, args.md, args.html, schema=schema)
         for k in total_stats:
             total_stats[k] += stats.get(k, 0)
         all_errors.extend(errors)

@@ -1,6 +1,7 @@
 from .types import Column, ColumnRef, JoinKey, LineageResult, Unresolved
 from .parser import load_schema, parse_all_lineage, parse_lineage
 from .schema_metadata import DictSchemaProvider, materialize_schema
+from .html_report import render_html, write_html_report, write_html_report_from_dir
 from .scope_types import (
     ScopeColumn,
     ScopeData,
@@ -47,6 +48,9 @@ __all__ = [
     "to_dict",
     "to_json",
     "write_output",
+    "render_html",
+    "write_html_report",
+    "write_html_report_from_dir",
     "run_task",
     "safe_id",
     "scope_overview_mmd",

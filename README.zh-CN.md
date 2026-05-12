@@ -52,7 +52,8 @@ python -m pip install -e ".[dev]"
 scope-lineage parse \
   --sql-file examples/simple_insert.sql \
   --out /tmp/scope-lineage-demo \
-  --md
+  --md \
+  --html
 ```
 
 如果 SQL 里有 `SELECT *`，可以提供表结构信息：
@@ -62,7 +63,8 @@ scope-lineage parse \
   --sql-file examples/select_star_with_schema.sql \
   --schema examples/table_cols.csv \
   --out /tmp/scope-lineage-star-demo \
-  --md
+  --md \
+  --html
 ```
 
 运行测试：
@@ -99,7 +101,8 @@ for column in root.columns:
 scope-lineage parse \
   --sql-file examples/simple_insert.sql \
   --out /tmp/scope-lineage-demo \
-  --md
+  --md \
+  --html
 ```
 
 ### 批量解析任务目录
@@ -120,7 +123,8 @@ python tools/run_scope_corpus.py \
   --input-dir examples/tasks \
   --out /tmp/scope-output \
   --schema examples/table_cols.csv \
-  --md
+  --md \
+  --html
 ```
 
 ### 审计输出结果
@@ -171,6 +175,7 @@ python tools/summarize_audit_reports.py \
 ```text
 lineage.json
 diagnostics.json
+report.html
 lineage.md
 views/
   scope_overview.mmd
@@ -179,7 +184,8 @@ views/
   per_column/*.mmd
 ```
 
-`lineage.json` 是机器可读的 scope 图。Mermaid 文件主要用于人工检查和调试。
+`lineage.json` 是机器可读的 scope 图。`report.html` 是自包含的离线可视化报告，
+包含 scope DAG、ROOT 字段表、单字段聚焦血缘和 diagnostics。Mermaid 文件主要用于人工检查和调试。
 
 ## 基本原理
 
@@ -285,4 +291,3 @@ ods.users,status
 ## License
 
 Apache-2.0
-

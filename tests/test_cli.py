@@ -28,6 +28,7 @@ def test_cli_parse_writes_outputs(tmp_path):
         "--out",
         str(out_dir),
         "--md",
+        "--html",
     ])
 
     assert code == 0
@@ -36,3 +37,4 @@ def test_cli_parse_writes_outputs(tmp_path):
     data = json.loads(lineage_path.read_text(encoding="utf-8"))
     assert [c["name"] for c in data["scopes"]["ROOT"]["columns"]] == ["id", "country"]
     assert (out_dir / "demo" / "views" / "scope_overview.mmd").exists()
+    assert (out_dir / "demo" / "report.html").exists()
