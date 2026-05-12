@@ -19,6 +19,9 @@ def test_render_html_is_self_contained_and_contains_core_ui():
     assert "Scope DAG" in html
     assert "ROOT Columns" in html
     assert "Focused Column Lineage" in html
+    assert "wheelZoomFactor" in html
+    assert "beforeX" in html
+    assert "resetTransform(state.fieldTransform)" in html
     assert "http://" not in html
     assert "https://" not in html
     assert "<script src=" not in html

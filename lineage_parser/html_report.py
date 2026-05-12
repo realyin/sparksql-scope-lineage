@@ -506,6 +506,21 @@ function drawNode(group, n, onClick) {
   group.appendChild(g);
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function resetTransform(transform) {
+  transform.x = 20;
+  transform.y = 20;
+  transform.k = 1;
+}
+
+function wheelZoomFactor(ev) {
+  const sensitivity = ev.deltaMode === 1 ? 0.05 : 0.002;
+  return clamp(Math.exp(-ev.deltaY * sensitivity), 0.85, 1.15);
+}
+
 function setupPanZoom(svg, viewport, transform, fitButton) {
   svg._viewport = viewport;
   svg._transform = transform;
@@ -521,8 +536,15 @@ function setupPanZoom(svg, viewport, transform, fitButton) {
   svg._panZoomReady = true;
   svg.addEventListener("wheel", ev => {
     ev.preventDefault();
-    const delta = ev.deltaY > 0 ? 0.9 : 1.1;
-    transform.k = Math.max(0.15, Math.min(3, transform.k * delta));
+    const rect = svg.getBoundingClientRect();
+    const px = ev.clientX - rect.left;
+    const py = ev.clientY - rect.top;
+    const beforeX = (px - transform.x) / transform.k;
+    const beforeY = (py - transform.y) / transform.k;
+    const nextK = clamp(transform.k * wheelZoomFactor(ev), 0.15, 3);
+    transform.x = px - beforeX * nextK;
+    transform.y = py - beforeY * nextK;
+    transform.k = nextK;
     apply();
   }, {passive: false});
   svg.addEventListener("mousedown", ev => {
@@ -618,6 +640,7 @@ function renderColumns() {
 }
 
 function selectColumn(name) {
+  const changed = state.selectedColumn !== name;
   state.selectedColumn = name;
   document.querySelectorAll("#columnsBody tr").forEach(row => row.classList.toggle("selected", row.dataset.column === name));
   const col = columnInScope("ROOT", name);
@@ -629,6 +652,7 @@ function selectColumn(name) {
     <dt>Sources</dt><dd>${esc((col?.sources || []).map(s => `${s.scope}.${s.column}`).join(", "))}</dd>
     <dt>Physical</dt><dd>${esc(phys.join(", "))}</dd>
   </dl>`;
+  if (changed) resetTransform(state.fieldTransform);
   renderFieldGraph(name);
 }
 
