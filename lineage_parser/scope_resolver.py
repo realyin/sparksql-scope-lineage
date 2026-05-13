@@ -21,6 +21,7 @@ from .parser import (
 )
 from .scope_types import (
     CONSTANT_SCOPE_ID,
+    SYSTEM_SCOPE_ID,
     SourceRef,
     ScopeColumn,
     ScopeData,
@@ -49,8 +50,14 @@ def _constant_sources(expression: str | None) -> list[SourceRef]:
     return [SourceRef(scope=CONSTANT_SCOPE_ID, column=literal)]
 
 
+def _system_sources(expression: str | None) -> list[SourceRef]:
+    """Represent runtime/system expressions as traceable non-table leaves."""
+    label = expression if expression else "<system>"
+    return [SourceRef(scope=SYSTEM_SCOPE_ID, column=label)]
+
+
 def _is_dependency_scope(scope_id: str | None) -> bool:
-    return bool(scope_id and scope_id not in {"UNKNOWN", CONSTANT_SCOPE_ID})
+    return bool(scope_id and scope_id not in {"UNKNOWN", CONSTANT_SCOPE_ID, SYSTEM_SCOPE_ID})
 
 
 def resolve_all(
@@ -195,7 +202,7 @@ def _resolve_values_scope(
             name=name,
             transform=transform,
             expression=expression,
-            sources=_constant_sources(expression) if transform == "CONSTANT" else [],
+            sources=_source_free_leaf_sources(expr, expression) if expr is not None else _constant_sources(expression),
         ))
 
 
@@ -275,6 +282,8 @@ def _resolve_projection(
 
     # Find all Column references and resolve them
     sources = _resolve_column_refs_in_expr(inner, sg_scope, result, schema)
+    if not sources:
+        sources = _fallback_sources_for_source_free_expr(inner, transform, expression, sg_scope, result)
 
     col = ScopeColumn(name=name, transform=transform, expression=expression, sources=sources)
 
@@ -289,6 +298,68 @@ def _resolve_projection(
         col.agg_function = _extract_agg_function(inner)
 
     return [col]
+
+
+def _fallback_sources_for_source_free_expr(
+    inner: exp.Expression,
+    transform: str,
+    expression: str,
+    sg_scope: Scope,
+    result: ScopeLineageResult,
+) -> list[SourceRef]:
+    """Give source-free non-literal expressions a meaningful terminal lineage.
+
+    Examples:
+    - COUNT(*) and ROW_NUMBER() depend on the current input row set.
+    - NOW(), CURRENT_DATE(), RAND() are runtime/system values.
+    - DATE_ADD('2026-04-27', 1) and CONCAT('a', 'b') are literal-derived values.
+    """
+    if transform in {"AGGREGATE", "WINDOW"}:
+        rowset_sources = _rowset_sources(sg_scope, result)
+        if rowset_sources:
+            return rowset_sources
+
+    return _source_free_leaf_sources(inner, expression)
+
+
+def _rowset_sources(sg_scope: Scope, result: ScopeLineageResult) -> list[SourceRef]:
+    sources: list[SourceRef] = []
+    seen = set()
+    for alias, source in _selected_sources(sg_scope).items():
+        ref = _source_ref_for_source(alias, source, "*", result)
+        key = (ref.scope, ref.column)
+        if key not in seen:
+            seen.add(key)
+            sources.append(ref)
+    return sources
+
+
+def _source_free_leaf_sources(inner: exp.Expression, expression: str) -> list[SourceRef]:
+    if _contains_runtime_function(inner):
+        return _system_sources(expression)
+    return _constant_sources(expression)
+
+
+def _contains_runtime_function(node: exp.Expression) -> bool:
+    runtime_names = {
+        "CURRENT_DATE",
+        "CURRENT_TIMESTAMP",
+        "CURRENT_TIME",
+        "NOW",
+        "RAND",
+        "RANDOM",
+        "UUID",
+        "UNIX_TIMESTAMP",
+    }
+    for expr in node.walk():
+        if isinstance(expr, (exp.CurrentDate, exp.CurrentTimestamp, exp.Rand)):
+            return True
+        if isinstance(expr, exp.Anonymous):
+            name = expr.name.upper() if hasattr(expr, "name") else ""
+            if name in runtime_names:
+                return True
+    sql = node.sql(dialect=DIALECT).upper()
+    return any(f"{name}(" in sql or name in {"CURRENT_DATE", "CURRENT_TIMESTAMP"} and name in sql for name in runtime_names)
 
 
 def _resolve_multi_alias_projection(
@@ -1375,6 +1446,8 @@ def _resolve_merge_columns(
                         else:
                             if (using_scope_id, col_name) not in {(s.scope, s.column) for s in sources}:
                                 sources.append(SourceRef(scope=using_scope_id, column=col_name))
+                if not sources:
+                    sources = _source_free_leaf_sources(src_expr, expression)
 
                 result.scopes["ROOT"].columns.append(ScopeColumn(
                     name=dst_name, transform=transform, expression=expression,
@@ -1387,7 +1460,7 @@ def _resolve_merge_columns(
             values = then.expression
             if isinstance(ins_cols, exp.Tuple) and isinstance(values, exp.Tuple):
                 for dst_col_node, val_expr in zip(ins_cols.expressions, values.expressions):
-                    dst_name = dst_col_node.name if isinstance(dst_col_node, exp.Identifier) else str(dst_col_node)
+                    dst_name = dst_col_node.name if hasattr(dst_col_node, "name") else str(dst_col_node)
                     transform = _classify_extended(val_expr)
                     expression = val_expr.sql(dialect=DIALECT)
                     sources = []
@@ -1396,6 +1469,8 @@ def _resolve_merge_columns(
                             col_name = col_ref.name
                             if (using_scope_id, col_name) not in {(s.scope, s.column) for s in sources}:
                                 sources.append(SourceRef(scope=using_scope_id, column=col_name))
+                    if not sources:
+                        sources = _source_free_leaf_sources(val_expr, expression)
 
                     result.scopes["ROOT"].columns.append(ScopeColumn(
                         name=dst_name, transform=transform, expression=expression,

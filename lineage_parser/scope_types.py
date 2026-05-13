@@ -10,6 +10,7 @@ from typing import Dict, List, Optional
 
 
 CONSTANT_SCOPE_ID = "CONSTANT"
+SYSTEM_SCOPE_ID = "SYSTEM"
 
 
 @dataclass

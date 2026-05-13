@@ -3,7 +3,7 @@
 import pytest
 
 from lineage_parser.scope_builder import parse_scope_lineage
-from lineage_parser.scope_types import CONSTANT_SCOPE_ID, ScopeColumn, SourceRef
+from lineage_parser.scope_types import CONSTANT_SCOPE_ID, SYSTEM_SCOPE_ID, ScopeColumn, SourceRef
 from lineage_parser.scope_views import trace_to_physical
 
 
@@ -140,6 +140,17 @@ class TestValuesAndStarExpansion:
         assert result.scopes["ROOT"].columns[0].sources == [
             SourceRef(scope="cte:dim", column="k")
         ]
+
+    def test_values_expression_column_has_literal_source(self):
+        result = parse_scope_lineage(
+            "WITH dim AS (SELECT * FROM VALUES (MD5(CONCAT_WS(',', 'a', 'b'))) AS tab(k)) "
+            "INSERT INTO dwd.t SELECT d.k FROM dim d",
+            "test_values_expr_source",
+        )
+
+        value_col = result.scopes["udtf:tab"].columns[0]
+        assert value_col.transform == "EXPRESSION"
+        assert value_col.sources == [SourceRef(scope=CONSTANT_SCOPE_ID, column=value_col.expression)]
 
     def test_physical_bare_star_expands_with_mock_schema(self):
         result = parse_scope_lineage(
@@ -458,6 +469,40 @@ class TestUnionConstantBranchLineage:
         assert ("ods.b", "create_name", "UNION") in create_name_sources
 
 
+class TestSourceFreeDerivedLineage:
+    """Source-free non-constant transforms should still have explainable leaves."""
+
+    def test_count_star_uses_input_rowset(self):
+        result = parse_scope_lineage(
+            "INSERT INTO mart.t SELECT COUNT(*) AS cnt FROM ods.src a",
+            "test_count_star",
+        )
+
+        cnt = result.scopes["ROOT"].columns[0]
+        assert cnt.transform == "AGGREGATE"
+        assert cnt.sources == [SourceRef(scope="ods.src", column="*")]
+
+    def test_runtime_expression_uses_system_leaf(self):
+        result = parse_scope_lineage(
+            "INSERT INTO mart.t SELECT DATE_FORMAT(NOW(), 'yyyy-MM-dd') AS dt",
+            "test_runtime_expr",
+        )
+
+        dt = result.scopes["ROOT"].columns[0]
+        assert dt.transform == "EXPRESSION"
+        assert dt.sources == [SourceRef(scope=SYSTEM_SCOPE_ID, column=dt.expression)]
+
+    def test_literal_expression_uses_constant_leaf(self):
+        result = parse_scope_lineage(
+            "INSERT INTO mart.t SELECT DATE_ADD('2026-04-27', 1) AS dt",
+            "test_literal_expr",
+        )
+
+        dt = result.scopes["ROOT"].columns[0]
+        assert dt.transform == "EXPRESSION"
+        assert dt.sources == [SourceRef(scope=CONSTANT_SCOPE_ID, column=dt.expression)]
+
+
 class TestWindowFunction:
     """WINDOW transform: window info extracted."""
 
@@ -534,6 +579,20 @@ class TestMergeBothBranches:
         for col in nm_cols:
             if col.sources:
                 assert col.sources[0].scope == "subq:s"
+
+    def test_merge_constant_value_has_literal_source(self):
+        result = parse_scope_lineage(
+            "MERGE INTO dwd.t USING (SELECT a.id FROM ods.src a) s "
+            "ON t.id = s.id "
+            "WHEN MATCHED THEN UPDATE SET t.flag = '1' "
+            "WHEN NOT MATCHED THEN INSERT (id, flag) VALUES (s.id, '0')",
+            "test_merge_constants",
+        )
+
+        flags = [c for c in result.scopes["ROOT"].columns if c.name == "flag"]
+        assert {c.merge_branch for c in flags} == {"matched", "not_matched"}
+        assert [SourceRef(scope=CONSTANT_SCOPE_ID, column="'1'")] in [c.sources for c in flags]
+        assert [SourceRef(scope=CONSTANT_SCOPE_ID, column="'0'")] in [c.sources for c in flags]
 
 
 class TestMergeDeleteBranch:

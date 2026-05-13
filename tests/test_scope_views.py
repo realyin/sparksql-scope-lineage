@@ -173,6 +173,69 @@ class TestTraceToPhysical:
 
         assert trace_to_physical(result, "ROOT", "id") == [("ods.src", "id", "EXPAND_ALL")]
 
+    def test_star_request_expands_concrete_scope_columns(self):
+        result = ScopeLineageResult(
+            task_id="manual_star_rowset",
+            target_table="dwd.t",
+            stmt_kind="INSERT",
+            source_tables=["ods.src"],
+            scope_graph=ScopeGraph(nodes=["ROOT", "subq:s", "ods.src"], edges=[]),
+            scopes={
+                "ROOT": ScopeData(
+                    kind="root",
+                    columns=[
+                        ScopeColumn(
+                            name="cnt",
+                            transform="AGGREGATE",
+                            sources=[SourceRef(scope="subq:s", column="*")],
+                        )
+                    ],
+                ),
+                "subq:s": ScopeData(
+                    kind="subquery",
+                    columns=[
+                        ScopeColumn(name="id", transform="DIRECT", sources=[SourceRef(scope="ods.src", column="id")]),
+                        ScopeColumn(name="name", transform="DIRECT", sources=[SourceRef(scope="ods.src", column="name")]),
+                    ],
+                ),
+            },
+        )
+
+        assert sorted(trace_to_physical(result, "ROOT", "cnt")) == [
+            ("ods.src", "id", "AGGREGATE"),
+            ("ods.src", "name", "AGGREGATE"),
+        ]
+
+    def test_missing_column_with_single_upstream_is_passed_through(self):
+        result = ScopeLineageResult(
+            task_id="manual_single_upstream_missing",
+            target_table="dwd.t",
+            stmt_kind="INSERT",
+            source_tables=["ods.src"],
+            scope_graph=ScopeGraph(nodes=["ROOT", "subq:s", "ods.src"], edges=[]),
+            scopes={
+                "ROOT": ScopeData(
+                    kind="root",
+                    columns=[
+                        ScopeColumn(
+                            name="late_col",
+                            transform="DIRECT",
+                            sources=[SourceRef(scope="subq:s", column="late_col")],
+                        )
+                    ],
+                ),
+                "subq:s": ScopeData(
+                    kind="subquery",
+                    depends_on=["ods.src"],
+                    columns=[
+                        ScopeColumn(name="known_col", transform="DIRECT", sources=[SourceRef(scope="ods.src", column="known_col")]),
+                    ],
+                ),
+            },
+        )
+
+        assert trace_to_physical(result, "ROOT", "late_col") == [("ods.src", "late_col", "DIRECT")]
+
 
 class TestUpstream:
     @pytest.fixture(autouse=True)

@@ -15,6 +15,7 @@ from typing import Any
 
 from .scope_types import (
     CONSTANT_SCOPE_ID,
+    SYSTEM_SCOPE_ID,
     DiagnosticWarning,
     Diagnostics,
     ScopeColumn,
@@ -65,7 +66,7 @@ def validate_cross_references(data: dict) -> list[str]:
     errors: list[str] = []
     known_scopes: set[str] = set(data.get("scopes", {}).keys())
     all_nodes: set[str] = set(data.get("scope_graph", {}).get("nodes", []))
-    valid_ids = known_scopes | all_nodes | {CONSTANT_SCOPE_ID}
+    valid_ids = known_scopes | all_nodes | {CONSTANT_SCOPE_ID, SYSTEM_SCOPE_ID}
 
     for edge in data.get("scope_graph", {}).get("edges", []):
         for key in ("from", "to"):

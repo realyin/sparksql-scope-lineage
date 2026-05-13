@@ -15,6 +15,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from .scope_types import (
     CONSTANT_SCOPE_ID,
+    SYSTEM_SCOPE_ID,
     ScopeColumn,
     ScopeData,
     ScopeLineageResult,
@@ -44,6 +45,7 @@ NODE_COLORS: Dict[str, Tuple[str, str]] = {
     "union_branch": ("#fce4ec", "#c2185b"),
     "subquery": ("#e8f5e9", "#388e3c"),
     "constant": ("#f6f8fa", "#6e7781"),
+    "system": ("#fff8c5", "#9a6700"),
 }
 
 _TRANSFORM_PRIORITY: Dict[str, int] = {
@@ -100,6 +102,8 @@ def _scope_kind_for_node(scope_id: str, result: ScopeLineageResult) -> str:
     """Determine the visual kind for a scope node."""
     if scope_id == CONSTANT_SCOPE_ID:
         return "constant"
+    if scope_id == SYSTEM_SCOPE_ID:
+        return "system"
     if scope_id not in result.scopes:
         return "physical_table"
     return result.scopes[scope_id].kind
@@ -196,6 +200,22 @@ def _trace_to_physical_impl(
 
     effective_col = matched_col or wildcard_col
     if effective_col is None:
+        if col_name == "*":
+            result_list = []
+            for col in scope_data.columns:
+                if col.name == "*":
+                    continue
+                dominant = _more_significant_transform(col.transform, incoming_transform)
+                for src in col.sources:
+                    result_list.extend(
+                        _trace_to_physical_impl(result, src.scope, src.column, dominant, visited | {key})
+                    )
+            return result_list
+        if scope_id != "ROOT" and len(scope_data.depends_on) == 1:
+            only_upstream = scope_data.depends_on[0]
+            return _trace_to_physical_impl(
+                result, only_upstream, col_name, incoming_transform, visited | {key}
+            )
         return []
 
     dominant = _more_significant_transform(effective_col.transform, incoming_transform)
@@ -271,9 +291,10 @@ def scope_overview_mmd(result: ScopeLineageResult) -> str:
         if kind == "physical_table":
             label = _short_table_name(node)
             lines.append(f'    {nid}[("{_mermaid_escape(label)}")]')
-        elif kind == "constant":
-            lines.append(f'    {nid}[("{CONSTANT_SCOPE_ID}")]')
-            fill, stroke = NODE_COLORS["constant"]
+        elif kind in {"constant", "system"}:
+            label = CONSTANT_SCOPE_ID if kind == "constant" else SYSTEM_SCOPE_ID
+            lines.append(f'    {nid}[("{label}")]')
+            fill, stroke = NODE_COLORS[kind]
             style_lines.append(f"style {nid} fill:{fill},stroke:{stroke}")
         elif node == "ROOT":
             target = result.target_table or "?"
@@ -334,13 +355,23 @@ def physical_lineage_mmd(result: ScopeLineageResult) -> str:
     # Emit physical table subgraphs
     for table in sorted(physical_cols.keys()):
         tid = safe_id(table)
-        label = CONSTANT_SCOPE_ID if table == CONSTANT_SCOPE_ID else _short_table_name(table)
+        if table == CONSTANT_SCOPE_ID:
+            label = CONSTANT_SCOPE_ID
+        elif table == SYSTEM_SCOPE_ID:
+            label = SYSTEM_SCOPE_ID
+        else:
+            label = _short_table_name(table)
         lines.append(f'    subgraph {tid}["{label}"]')
         for col_name in sorted(physical_cols[table]):
             cnid = column_node_id(table, col_name)
             lines.append(f'        {cnid}[("{_mermaid_escape(col_name)}")]')
         lines.append("    end")
-        fill, stroke = NODE_COLORS["constant"] if table == CONSTANT_SCOPE_ID else NODE_COLORS["physical_table"]
+        if table == CONSTANT_SCOPE_ID:
+            fill, stroke = NODE_COLORS["constant"]
+        elif table == SYSTEM_SCOPE_ID:
+            fill, stroke = NODE_COLORS["system"]
+        else:
+            fill, stroke = NODE_COLORS["physical_table"]
         style_lines.append(f"style {tid} fill:{fill},stroke:{stroke}")
 
     # Emit ROOT subgraph
@@ -403,13 +434,14 @@ def single_field_trace_mmd(
                 lines.append(f'        {cnid}[("{c}")]')
             lines.append("    end")
             style_lines.append(f"style {sid} fill:#e1f5ff,stroke:#0277bd")
-        elif kind == "constant":
-            lines.append(f'    subgraph {sid}["{CONSTANT_SCOPE_ID}"]')
+        elif kind in {"constant", "system"}:
+            label = CONSTANT_SCOPE_ID if kind == "constant" else SYSTEM_SCOPE_ID
+            lines.append(f'    subgraph {sid}["{label}"]')
             for c in sorted(cols):
                 cnid = column_node_id(s, c)
                 lines.append(f'        {cnid}[("{_mermaid_escape(c)}")]')
             lines.append("    end")
-            fill, stroke = NODE_COLORS["constant"]
+            fill, stroke = NODE_COLORS[kind]
             style_lines.append(f"style {sid} fill:{fill},stroke:{stroke}")
         else:
             sd = result.scopes.get(s)
@@ -469,13 +501,23 @@ def field_lineage_mmd(result: ScopeLineageResult) -> str:
     # Emit physical table subgraphs first
     for table in sorted(physical_cols.keys()):
         tid = safe_id(table)
-        label = CONSTANT_SCOPE_ID if table == CONSTANT_SCOPE_ID else _short_table_name(table)
+        if table == CONSTANT_SCOPE_ID:
+            label = CONSTANT_SCOPE_ID
+        elif table == SYSTEM_SCOPE_ID:
+            label = SYSTEM_SCOPE_ID
+        else:
+            label = _short_table_name(table)
         lines.append(f'    subgraph {tid}["{label}"]')
         for col_name in sorted(physical_cols[table]):
             cnid = column_node_id(table, col_name)
             lines.append(f'        {cnid}[("{_mermaid_escape(col_name)}")]')
         lines.append("    end")
-        fill, stroke = NODE_COLORS["constant"] if table == CONSTANT_SCOPE_ID else NODE_COLORS["physical_table"]
+        if table == CONSTANT_SCOPE_ID:
+            fill, stroke = NODE_COLORS["constant"]
+        elif table == SYSTEM_SCOPE_ID:
+            fill, stroke = NODE_COLORS["system"]
+        else:
+            fill, stroke = NODE_COLORS["physical_table"]
         style_lines.append(f"style {tid} fill:{fill},stroke:{stroke}")
 
     # Emit scope subgraphs

@@ -323,6 +323,7 @@ function shortName(value, limit = 42) {
 
 function scopeKind(id) {
   if (id === "CONSTANT") return "constant";
+  if (id === "SYSTEM") return "system";
   if (!scopes[id]) return "physical";
   const kind = scopes[id].kind || "scope";
   if (id === "ROOT") return "root";
@@ -348,6 +349,7 @@ function styleForKind(kind) {
     union_branch: ["#ffeff7", "#bf3989"],
     physical: ["#ddf4ff", "#0969da"],
     constant: ["#f6f8fa", "#6e7781"],
+    system: ["#fff8c5", "#9a6700"],
     unknown: ["#ffebe9", "#cf222e"],
   };
   return map[kind] || ["#f8fafc", "#667085"];
@@ -374,12 +376,12 @@ function traceColumn(scopeId, colName, seen = new Set(), edges = [], nodes = new
   const key = columnKey(scopeId, colName);
   if (seen.has(key)) return {nodes, edges};
   seen.add(key);
-  nodes.set(key, {scope: scopeId, column: colName, kind: scopes[scopeId] || scopeId === "CONSTANT" ? scopeKind(scopeId) : (scopeId === "UNKNOWN" ? "unknown" : "physical")});
+  nodes.set(key, {scope: scopeId, column: colName, kind: scopes[scopeId] || scopeId === "CONSTANT" || scopeId === "SYSTEM" ? scopeKind(scopeId) : (scopeId === "UNKNOWN" ? "unknown" : "physical")});
   const col = columnInScope(scopeId, colName);
   if (!col) return {nodes, edges};
   for (const src of (col.sources || [])) {
     const srcKey = columnKey(src.scope, src.column);
-    nodes.set(srcKey, {scope: src.scope, column: src.column, kind: scopes[src.scope] || src.scope === "CONSTANT" ? scopeKind(src.scope) : (src.scope === "UNKNOWN" ? "unknown" : "physical")});
+    nodes.set(srcKey, {scope: src.scope, column: src.column, kind: scopes[src.scope] || src.scope === "CONSTANT" || src.scope === "SYSTEM" ? scopeKind(src.scope) : (src.scope === "UNKNOWN" ? "unknown" : "physical")});
     edges.push({from: srcKey, to: key, transform: col.transform || "DIRECT"});
     traceColumn(src.scope, src.column, seen, edges, nodes);
   }
