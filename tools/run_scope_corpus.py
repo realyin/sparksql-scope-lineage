@@ -1,9 +1,10 @@
 """Run v2 scope-based parser over task_info corpus directories.
 
 Usage:
-    python tools/run_scope_corpus.py [--input-dir examples/tasks] [--out /tmp/scope_out] [--md]
+    python tools/run_scope_corpus.py [--input-dir examples/tasks] [--out /tmp/scope_out] [--md] [--html]
 
-Outputs per-task directory with lineage.json + diagnostics.json (and optionally views/).
+Outputs per-task directory with lineage.json + profile.json + diagnostics.json
+(and optionally views/ and report.html).
 """
 
 from __future__ import annotations
