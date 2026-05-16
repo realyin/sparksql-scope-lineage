@@ -174,6 +174,7 @@ python tools/summarize_audit_reports.py \
 
 ```text
 lineage.json
+profile.json
 diagnostics.json
 report.html
 lineage.md
@@ -184,8 +185,24 @@ views/
   per_column/*.mmd
 ```
 
-`lineage.json` 是机器可读的 scope 图。`report.html` 是自包含的离线可视化报告，
-包含 scope DAG、ROOT 字段表、单字段聚焦血缘和 diagnostics。Mermaid 文件主要用于人工检查和调试。
+`lineage.json` 是完整的机器可读血缘结果，包含所有中间 `scopes`、`scope_graph`、
+diagnostics、`scope_profile`，以及 ROOT 字段到物理表字段的端到端血缘。
+
+`profile.json` 是给 LLM/任务画像使用的轻量产物。它不包含完整的中间 `scopes`
+明细，只保留解释 SQL 加工逻辑所需的信息：
+
+- `scope_graph`：scope 级 DAG；
+- `scope_profile`：每个 scope 一步加工摘要，包含 role、operations、物理源表、
+  joins、filters、aggregations、window、CASE 摘要和关键重命名；
+- `root_columns`：最终输出字段；
+- `end_to_end_lineage`：ROOT 字段追溯到物理表字段；
+- `diagnostics`：warning 和解析置信度信号。
+
+`report.html` 是自包含的离线可视化报告，包含 scope DAG、ROOT 字段表、单字段
+聚焦血缘和 diagnostics。它不依赖 CDN、字体、脚本或本地旁路文件，可以直接在
+受限内网环境打开。
+
+Mermaid 文件主要用于人工检查和调试。
 
 ## 基本原理
 
@@ -215,7 +232,8 @@ SQL
   -> 按位置对齐 UNION 分支
   -> 在有 schema 时展开 SELECT *
   -> 生成 scope 图和 diagnostics
-  -> 输出 JSON / Mermaid / Markdown
+  -> 派生轻量 scope profile 和端到端物理血缘
+  -> 输出 JSON / HTML / Mermaid / Markdown
   -> 审计输出一致性
 ```
 
