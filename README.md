@@ -170,6 +170,7 @@ Each parsed statement can produce:
 
 ```text
 lineage.json
+profile.json
 diagnostics.json
 report.html
 lineage.md
@@ -180,10 +181,28 @@ views/
   per_column/*.mmd
 ```
 
-`lineage.json` contains the machine-readable scope graph. `report.html` is a
-self-contained offline visual report with a scope DAG, ROOT column table,
-focused field lineage, and diagnostics. Mermaid files are intended for visual
-inspection and debugging.
+`lineage.json` contains the complete machine-readable lineage result, including
+all intermediate `scopes`, `scope_graph`, diagnostics, `scope_profile`, and
+end-to-end physical lineage for ROOT columns.
+
+`profile.json` is the compact LLM/task-profile artifact. It omits the full
+intermediate `scopes` payload and keeps the pieces that explain the SQL at a
+business-logic level:
+
+- `scope_graph`: the scope-level DAG,
+- `scope_profile`: one processing step per scope, with role, operations,
+  physical source tables, joins, filters, aggregations, windows, CASE summaries,
+  and key renames,
+- `root_columns`: the target-facing columns,
+- `end_to_end_lineage`: ROOT columns traced back to physical table columns,
+- `diagnostics`: warnings and parser confidence signals.
+
+`report.html` is a self-contained offline visual report with a scope DAG, ROOT
+column table, focused field lineage, and diagnostics. It does not load CDN
+assets, fonts, scripts, or local sidecar files, so it can be opened directly in
+restricted intranet environments.
+
+Mermaid files are intended for visual inspection and debugging.
 
 ## How It Works
 
@@ -220,7 +239,8 @@ SQL
   -> align UNION branches by position
   -> expand SELECT * when schema is available
   -> build scope graph and diagnostics
-  -> render JSON / Mermaid / Markdown
+  -> derive compact scope profile and end-to-end physical lineage
+  -> render JSON / HTML / Mermaid / Markdown
   -> audit output consistency
 ```
 

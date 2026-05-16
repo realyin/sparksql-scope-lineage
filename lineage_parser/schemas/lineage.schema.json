@@ -13,6 +13,74 @@
     },
     "source_tables": { "type": "array", "items": { "type": "string" } },
     "partition_columns": { "type": "array", "items": { "type": "string" } },
+    "end_to_end_lineage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["column", "transform", "physical_sources"],
+        "properties": {
+          "column": { "type": "string" },
+          "transform": { "type": "string" },
+          "physical_sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["table", "column", "transform"],
+              "properties": {
+                "table": { "type": "string" },
+                "column": { "type": "string" },
+                "transform": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "scope_profile": {
+      "type": "object",
+      "properties": {
+        "scope_count": { "type": "integer" },
+        "step_count": { "type": "integer" },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "scope_id",
+              "name",
+              "kind",
+              "role",
+              "operations",
+              "direct_inputs",
+              "physical_source_tables",
+              "output_columns",
+              "logic"
+            ],
+            "properties": {
+              "scope_id": { "type": "string" },
+              "name": { "type": "string" },
+              "kind": { "type": "string" },
+              "role": { "type": "string" },
+              "operations": { "type": "array", "items": { "type": "string" } },
+              "direct_inputs": { "type": "array", "items": { "type": "string" } },
+              "physical_source_tables": { "type": "array", "items": { "type": "string" } },
+              "output_columns": { "type": "integer" },
+              "logic": {
+                "type": "object",
+                "properties": {
+                  "joins": { "type": "array" },
+                  "filters": { "type": "array", "items": { "type": "string" } },
+                  "aggregations": { "type": "array" },
+                  "window_functions": { "type": "array" },
+                  "case_when": { "type": "array" },
+                  "key_renames": { "type": "array" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "scope_graph": {
       "type": "object",
       "required": ["nodes", "edges"],

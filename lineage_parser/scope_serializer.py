@@ -27,6 +27,8 @@ from .scope_types import (
     ScopeLineageResult,
     SourceRef,
 )
+from .end_to_end import build_end_to_end_lineage
+from .scope_profile import build_scope_profile
 
 
 _SCHEMA_PATH = Path(__file__).parent / "schemas" / "lineage.schema.json"
@@ -126,8 +128,30 @@ def to_json(result: ScopeLineageResult, indent: int = 2) -> str:
     return json.dumps(to_dict(result), ensure_ascii=False, indent=indent, default=str)
 
 
+def to_profile_dict(result: ScopeLineageResult) -> dict:
+    """Return compact LLM/profile-oriented output without full intermediate scopes."""
+    full = to_dict(result)
+    root = full.get("scopes", {}).get("ROOT", {})
+    return {
+        "task_id": full["task_id"],
+        "target_table": full["target_table"],
+        "stmt_kind": full["stmt_kind"],
+        "source_tables": full.get("source_tables", []),
+        "scope_graph": full.get("scope_graph", {}),
+        "scope_profile": full.get("scope_profile", {}),
+        "root_columns": root.get("columns", []),
+        "end_to_end_lineage": full.get("end_to_end_lineage", []),
+        "diagnostics": full.get("diagnostics", {}),
+    }
+
+
+def to_profile_json(result: ScopeLineageResult, indent: int = 2) -> str:
+    """Serialize compact LLM/profile-oriented output to JSON."""
+    return json.dumps(to_profile_dict(result), ensure_ascii=False, indent=indent, default=str)
+
+
 def write_output(result: ScopeLineageResult, output_dir: str | Path) -> Path:
-    """Write lineage.json and diagnostics.json to output_dir.
+    """Write lineage.json, profile.json, and diagnostics.json to output_dir.
 
     Returns the output directory path.
     """
@@ -151,6 +175,11 @@ def write_output(result: ScopeLineageResult, output_dir: str | Path) -> Path:
     with open(lineage_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2, default=str)
 
+    # Write compact LLM/profile-oriented output without full intermediate scopes
+    profile_path = output_dir / "profile.json"
+    with open(profile_path, "w", encoding="utf-8") as f:
+        json.dump(to_profile_dict(result), f, ensure_ascii=False, indent=2, default=str)
+
     # Write diagnostics separately
     diag_path = output_dir / "diagnostics.json"
     with open(diag_path, "w", encoding="utf-8") as f:
@@ -170,6 +199,8 @@ def _result_to_dict(r: ScopeLineageResult) -> dict:
         "source_tables": r.source_tables,
         "scope_graph": to_dict(r.scope_graph),
         "scopes": {k: to_dict(v) for k, v in r.scopes.items()},
+        "scope_profile": build_scope_profile(r),
+        "end_to_end_lineage": build_end_to_end_lineage(r),
         "diagnostics": to_dict(r.diagnostics),
     }
     return d
@@ -212,13 +243,13 @@ def _scope_column_to_dict(c: ScopeColumn) -> dict:
         d["expression"] = c.expression
     d["sources"] = [to_dict(s) for s in c.sources] if c.sources else []
     if c.case_branches is not None:
-        d["case_branches"] = c.case_branches
+        d["case_branches"] = to_dict(c.case_branches)
     if c.window is not None:
-        d["window"] = c.window
+        d["window"] = to_dict(c.window)
     if c.agg_function is not None:
         d["agg_function"] = c.agg_function
     if c.branches is not None:
-        d["branches"] = c.branches
+        d["branches"] = to_dict(c.branches)
     if c.merge_branch is not None:
         d["merge_branch"] = c.merge_branch
     return d

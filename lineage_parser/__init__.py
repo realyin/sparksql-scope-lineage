@@ -11,7 +11,9 @@ from .scope_types import (
     SourceRef,
 )
 from .scope_builder import parse_scope_lineage, parse_all_scope_lineage
-from .scope_serializer import to_dict, to_json, write_output
+from .end_to_end import build_end_to_end_lineage
+from .scope_profile import build_scope_profile
+from .scope_serializer import to_dict, to_json, to_profile_dict, to_profile_json, write_output
 from .scope_views import (
     safe_id,
     scope_overview_mmd,
@@ -45,8 +47,12 @@ __all__ = [
     "SourceRef",
     "parse_scope_lineage",
     "parse_all_scope_lineage",
+    "build_end_to_end_lineage",
+    "build_scope_profile",
     "to_dict",
     "to_json",
+    "to_profile_dict",
+    "to_profile_json",
     "write_output",
     "render_html",
     "write_html_report",
