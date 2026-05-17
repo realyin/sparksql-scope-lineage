@@ -82,13 +82,13 @@ def test_scope_profile_summarizes_scope_operations_for_llm_use():
     end_to_end = data["end_to_end_lineage"]
     uid_lineage = next(item for item in end_to_end if item["column"] == "uid")
     assert uid_lineage["trace_complete"] is True
-    assert uid_lineage["trace_incomplete_reasons"] == []
+    assert "trace_incomplete_reasons" not in uid_lineage
     assert uid_lineage["physical_sources"] == [
         {"table": "ods.events", "column": "user_id", "transform": "DIRECT"}
     ]
     call_count_lineage = next(item for item in end_to_end if item["column"] == "call_count")
     assert call_count_lineage["trace_complete"] is True
-    assert call_count_lineage["trace_incomplete_reasons"] == []
+    assert "trace_incomplete_reasons" not in call_count_lineage
     assert call_count_lineage["physical_sources"] == [
         {"table": "ods.calls", "column": "call_id", "transform": "AGGREGATE"}
     ]

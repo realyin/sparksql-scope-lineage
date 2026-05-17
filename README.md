@@ -201,8 +201,8 @@ business-logic level:
   all known columns for wildcard or unresolved references,
 - `root_columns`: the target-facing columns,
 - `end_to_end_lineage`: ROOT columns traced back to physical table columns,
-  including `trace_complete` and reasons when tracing stops at patterns such as
-  unexpanded stars,
+  including `trace_complete`; `trace_incomplete_reasons` is emitted only when
+  tracing stops at patterns such as unexpanded stars,
 - `diagnostics`: warnings and parser confidence signals.
 
 `report.html` is a self-contained offline visual report with a scope DAG, ROOT

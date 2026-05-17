@@ -30,7 +30,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["column", "transform", "trace_complete", "trace_incomplete_reasons", "physical_sources"],
+        "required": ["column", "transform", "trace_complete", "physical_sources"],
         "properties": {
           "column": { "type": "string" },
           "transform": { "type": "string" },

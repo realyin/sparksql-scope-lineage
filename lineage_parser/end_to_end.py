@@ -35,13 +35,15 @@ def build_end_to_end_lineage(result: ScopeLineageResult) -> list[dict[str, Any]]
     items = []
     for column in root.columns:
         trace = _lineage_for_column(result, "ROOT", column.name)
-        items.append({
+        item = {
             "column": column.name,
             "transform": column.transform,
             "trace_complete": not trace["trace_incomplete_reasons"],
-            "trace_incomplete_reasons": trace["trace_incomplete_reasons"],
             "physical_sources": trace["physical_sources"],
-        })
+        }
+        if trace["trace_incomplete_reasons"]:
+            item["trace_incomplete_reasons"] = trace["trace_incomplete_reasons"]
+        items.append(item)
     return items
 
 

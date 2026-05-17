@@ -201,7 +201,7 @@ diagnostics、`scope_profile`，以及 ROOT 字段到物理表字段的端到端
   未解析等不确定引用时，会保守保留该表全部已知字段；
 - `root_columns`：最终输出字段；
 - `end_to_end_lineage`：ROOT 字段追溯到物理表字段，并带 `trace_complete`；
-  遇到未展开星号等中断场景时会给出原因；
+  只有遇到未展开星号等中断场景时才输出 `trace_incomplete_reasons`；
 - `diagnostics`：warning 和解析置信度信号。
 
 `report.html` 是自包含的离线可视化报告，包含 scope DAG、ROOT 字段表、单字段
