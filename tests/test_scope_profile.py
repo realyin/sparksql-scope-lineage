@@ -108,7 +108,7 @@ def test_profile_dict_is_compact_for_llm_preanalysis():
     profile = to_profile_dict(parse_scope_lineage(sql, "compact_profile"))
 
     assert set(profile) == {
-        "task_id",
+        "task_name",
         "target_table",
         "stmt_kind",
         "source_tables",
@@ -220,14 +220,26 @@ def test_related_metadata_keeps_only_columns_used_by_any_scope_when_safe():
     profile = to_profile_dict(parse_scope_lineage(sql, "metadata_filter", schema=schema))
 
     assert profile["related_metadata"] == {
-        "report_csc_ana.hotline_detail_realtime": {
-            "column_details": [
-                {"name": "dt", "type": "date", "comment": None},
-                {"name": "call_id", "type": "string", "comment": "拨打编号"},
-                {"name": "risklevel", "type": "string", "comment": "风险等级"},
-                {"name": "phone_number", "type": "string", "comment": "手机号"},
-            ]
-        }
+        "input_tables": {
+            "report_csc_ana.hotline_detail_realtime": {
+                "column_details": [
+                    {"name": "dt", "type": "date", "comment": None},
+                    {"name": "call_id", "type": "string", "comment": "拨打编号"},
+                    {"name": "risklevel", "type": "string", "comment": "风险等级"},
+                    {"name": "phone_number", "type": "string", "comment": "手机号"},
+                ],
+                "metadata_complete": True,
+            }
+        },
+        "output_tables": {
+            "mart.t": {
+                "column_details": [
+                    {"name": "call_id", "type": None, "comment": None},
+                    {"name": "risky_phone", "type": None, "comment": None},
+                ],
+                "metadata_complete": False,
+            }
+        },
     }
 
 
@@ -254,11 +266,11 @@ def test_related_metadata_includes_join_fields_without_keeping_whole_join_table(
 
     profile = to_profile_dict(parse_scope_lineage(sql, "metadata_join", schema=schema))
 
-    assert profile["related_metadata"]["report_csc_ana.hotline_detail_realtime"]["column_details"] == [
+    assert profile["related_metadata"]["input_tables"]["report_csc_ana.hotline_detail_realtime"]["column_details"] == [
         {"name": "call_id", "type": "string", "comment": "拨打编号"},
         {"name": "queue_id", "type": "string", "comment": "队列ID"},
     ]
-    assert profile["related_metadata"]["dim.queue"]["column_details"] == [
+    assert profile["related_metadata"]["input_tables"]["dim.queue"]["column_details"] == [
         {"name": "queue_id", "type": "string", "comment": "队列ID"},
         {"name": "queue_name", "type": "string", "comment": "队列名称"},
     ]
@@ -279,11 +291,60 @@ def test_related_metadata_keeps_all_columns_for_uncertain_star_reference():
 
     assert profile["end_to_end_lineage"][0]["trace_complete"] is True
     assert profile["related_metadata"] == {
-        "report_csc_ana.hotline_detail_realtime": {
+        "input_tables": {
+            "report_csc_ana.hotline_detail_realtime": {
+                "column_details": [
+                    {"name": "dt", "type": "date", "comment": None},
+                    {"name": "call_id", "type": "string", "comment": "拨打编号"},
+                    {"name": "begin_call_dt", "type": "string", "comment": None},
+                ],
+                "metadata_complete": True,
+            }
+        },
+        "output_tables": {
+            "mart.t": {
+                "column_details": [
+                    {"name": "dt", "type": None, "comment": None},
+                    {"name": "call_id", "type": None, "comment": None},
+                    {"name": "begin_call_dt", "type": None, "comment": None},
+                ],
+                "metadata_complete": False,
+            }
+        },
+    }
+
+
+def test_related_metadata_includes_input_tables_missing_from_schema():
+    sql = """
+    INSERT INTO mart.t
+    SELECT a.id, b.score
+    FROM ods.known a
+    LEFT JOIN ods.missing b
+      ON a.id = b.id
+    WHERE b.dt = '20260515'
+    """
+    schema = {
+        "ods.known": [
+            {"name": "id", "type": "string", "comment": "ID"},
+            {"name": "unused", "type": "string", "comment": "未使用"},
+        ]
+    }
+
+    profile = to_profile_dict(parse_scope_lineage(sql, "metadata_missing_schema", schema=schema))
+
+    assert "task_id" not in profile
+    assert profile["task_name"] == "metadata_missing_schema"
+    assert profile["related_metadata"]["input_tables"] == {
+        "ods.known": {
+            "column_details": [{"name": "id", "type": "string", "comment": "ID"}],
+            "metadata_complete": True,
+        },
+        "ods.missing": {
             "column_details": [
-                {"name": "dt", "type": "date", "comment": None},
-                {"name": "call_id", "type": "string", "comment": "拨打编号"},
-                {"name": "begin_call_dt", "type": "string", "comment": None},
-            ]
-        }
+                {"name": "score", "type": None, "comment": None},
+                {"name": "id", "type": None, "comment": None},
+                {"name": "dt", "type": None, "comment": None},
+            ],
+            "metadata_complete": False,
+        },
     }

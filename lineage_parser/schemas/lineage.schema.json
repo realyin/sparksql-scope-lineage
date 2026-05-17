@@ -14,21 +14,14 @@
     "source_tables": { "type": "array", "items": { "type": "string" } },
     "related_metadata": {
       "type": "object",
-      "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "column_details": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": ["name"],
-              "properties": {
-                "name": { "type": "string" },
-                "type": { "type": ["string", "null"] },
-                "comment": { "type": ["string", "null"] }
-              }
-            }
-          }
+      "properties": {
+        "input_tables": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/table_metadata" }
+        },
+        "output_tables": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/table_metadata" }
         }
       }
     },
@@ -186,6 +179,27 @@
           }
         },
         "stats": { "type": "object" }
+      }
+    }
+  },
+  "definitions": {
+    "table_metadata": {
+      "type": "object",
+      "required": ["column_details", "metadata_complete"],
+      "properties": {
+        "column_details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "type": ["string", "null"] },
+              "comment": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "metadata_complete": { "type": "boolean" }
       }
     }
   }

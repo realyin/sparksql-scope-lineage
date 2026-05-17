@@ -193,9 +193,10 @@ business-logic level:
 - `scope_profile`: one processing step per scope, with role, operations,
   physical source tables, joins, filters, aggregations, windows, CASE summaries,
   key renames, DISTINCT flags, UNION branch counts, and lateral-view expansions,
-- `related_metadata`: metadata for upstream columns that may be used by any
-  scope, conservatively keeping all columns for uncertain wildcard or unresolved
-  references,
+- `related_metadata`: `input_tables` and `output_tables` metadata. Input table
+  entries keep schema `type/comment` when available, fall back to columns
+  inferred from scope references when schema is missing, and conservatively keep
+  all known columns for wildcard or unresolved references,
 - `root_columns`: the target-facing columns,
 - `end_to_end_lineage`: ROOT columns traced back to physical table columns,
   including `trace_complete` and reasons when tracing stops at patterns such as

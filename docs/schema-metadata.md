@@ -79,7 +79,14 @@ Column order matters for wildcard expansion.
 ## Related Metadata Output
 
 When schema metadata includes column details, `lineage.json` and `profile.json`
-include `related_metadata`. It contains upstream column metadata that may be
-used by any scope. The filter is conservative: columns that are clearly absent
-from every scope are removed, while wildcard or unresolved references keep all
-known columns for that table.
+include `related_metadata` with separate `input_tables` and `output_tables`.
+Input table metadata contains columns that may be used by any scope. The filter
+is conservative: columns that are clearly absent from every scope are removed,
+while wildcard or unresolved references keep all known columns for that table.
+If an input table is missing from schema metadata, the output still includes the
+columns inferred from SQL references with `type/comment` set to null and
+`metadata_complete=false`.
+
+Output table metadata is derived from the ROOT output columns. Because the
+parser usually does not have target table comments or physical types, output
+entries currently use `type/comment=null` and `metadata_complete=false`.

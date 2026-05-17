@@ -17,41 +17,74 @@ def build_related_metadata(
     result: ScopeLineageResult,
     schema: Mapping[str, Iterable[str]] | None,
 ) -> dict:
-    """Return metadata for upstream fields that may be used by the SQL.
+    """Return input/output table metadata useful for LLM task profiling.
 
-    The filter is intentionally conservative: if a table has a wildcard,
-    unresolved, or otherwise uncertain reference, all known metadata for that
-    table is kept. Only columns that are clearly absent from every scope are
-    removed.
+    Input table metadata is conservative: if a table has a wildcard,
+    unresolved, or otherwise uncertain reference, all known metadata is kept.
+    Tables missing from schema metadata are still represented with columns
+    inferred from scope references and ``metadata_complete=false``.
     """
-    if not schema:
-        return {}
-
     usage = _collect_usage(result)
     if usage.keep_all_source_tables:
         usage.keep_all_tables.update(normalize_table_name(t) for t in result.source_tables)
 
-    related = {}
-    for table in result.source_tables:
-        details = column_details_for_table(schema, table)
-        if not details:
-            continue
+    return {
+        "input_tables": _input_table_metadata(result, schema, usage),
+        "output_tables": _output_table_metadata(result),
+    }
 
+
+def _input_table_metadata(
+    result: ScopeLineageResult,
+    schema: Mapping[str, Iterable[str]] | None,
+    usage: "_Usage",
+) -> dict:
+    tables = {}
+    for table in result.source_tables:
         table_key = normalize_table_name(table)
-        used_columns = usage.used_columns.get(table_key, set())
+        details = column_details_for_table(schema, table) if schema else []
+        used_columns = usage.used_columns.get(table_key, [])
         if table_key in usage.keep_all_tables:
-            selected = details
+            selected = details or [_unknown_column_detail("*")]
+            complete = bool(details)
         else:
             selected = [item for item in details if item["name"] in used_columns]
+            if not selected and used_columns:
+                selected = [_unknown_column_detail(name) for name in used_columns]
+            complete = bool(details)
 
         if selected:
-            related[table] = {"column_details": selected}
-    return related
+            tables[table] = {
+                "column_details": selected,
+                "metadata_complete": complete,
+            }
+    return tables
+
+
+def _output_table_metadata(result: ScopeLineageResult) -> dict:
+    root = result.scopes.get("ROOT")
+    if root is None or not result.target_table:
+        return {}
+    return {
+        result.target_table: {
+            "column_details": [
+                _unknown_column_detail(column.name)
+                for column in root.columns
+                if column.name
+            ],
+            "metadata_complete": False,
+        }
+    }
+
+
+def _unknown_column_detail(name: str) -> dict:
+    return {"name": name, "type": None, "comment": None}
 
 
 class _Usage:
     def __init__(self) -> None:
-        self.used_columns: dict[str, set[str]] = {}
+        self.used_columns: dict[str, list[str]] = {}
+        self._seen_columns: set[tuple[str, str]] = set()
         self.keep_all_tables: set[str] = set()
         self.keep_all_source_tables = False
 
@@ -99,4 +132,8 @@ def _add_scope_if_physical(scope_id: str, usage: _Usage, column: str = "*") -> N
     if not column or "*" in column:
         usage.keep_all_tables.add(table_key)
         return
-    usage.used_columns.setdefault(table_key, set()).add(column)
+    key = (table_key, column)
+    if key in usage._seen_columns:
+        return
+    usage._seen_columns.add(key)
+    usage.used_columns.setdefault(table_key, []).append(column)

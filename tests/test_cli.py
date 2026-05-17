@@ -37,12 +37,24 @@ def test_cli_parse_writes_outputs(tmp_path):
     data = json.loads(lineage_path.read_text(encoding="utf-8"))
     assert [c["name"] for c in data["scopes"]["ROOT"]["columns"]] == ["id", "country"]
     assert data["related_metadata"] == {
-        "ods.users": {
-            "column_details": [
-                {"name": "id", "type": "bigint", "comment": "用户ID"},
-                {"name": "country", "type": "string", "comment": "国家"},
-            ]
-        }
+        "input_tables": {
+            "ods.users": {
+                "column_details": [
+                    {"name": "id", "type": "bigint", "comment": "用户ID"},
+                    {"name": "country", "type": "string", "comment": "国家"},
+                ],
+                "metadata_complete": True,
+            }
+        },
+        "output_tables": {
+            "mart.user_snapshot": {
+                "column_details": [
+                    {"name": "id", "type": None, "comment": None},
+                    {"name": "country", "type": None, "comment": None},
+                ],
+                "metadata_complete": False,
+            }
+        },
     }
     profile = json.loads((out_dir / "demo" / "profile.json").read_text(encoding="utf-8"))
     assert profile["related_metadata"] == data["related_metadata"]

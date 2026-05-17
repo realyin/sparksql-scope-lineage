@@ -195,8 +195,9 @@ diagnostics、`scope_profile`，以及 ROOT 字段到物理表字段的端到端
 - `scope_profile`：每个 scope 一步加工摘要，包含 role、operations、物理源表、
   joins、filters、aggregations、window、CASE 摘要、关键重命名、DISTINCT 标记、
   UNION 分支数和 lateral view 展开信息；
-- `related_metadata`：任意 scope 可能用到的上游字段元数据；遇到星号或未解析等
-  不确定引用时，会保守保留该表全部字段；
+- `related_metadata`：拆分为 `input_tables` 和 `output_tables`。输入表优先使用
+  schema 中的 `type/comment`，schema 缺失时从 scope 引用字段补齐；遇到星号或
+  未解析等不确定引用时，会保守保留该表全部已知字段；
 - `root_columns`：最终输出字段；
 - `end_to_end_lineage`：ROOT 字段追溯到物理表字段，并带 `trace_complete`；
   遇到未展开星号等中断场景时会给出原因；

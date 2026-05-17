@@ -133,7 +133,7 @@ def to_profile_dict(result: ScopeLineageResult) -> dict:
     full = to_dict(result)
     root = full.get("scopes", {}).get("ROOT", {})
     return {
-        "task_id": full["task_id"],
+        "task_name": full["task_id"],
         "target_table": full["target_table"],
         "stmt_kind": full["stmt_kind"],
         "source_tables": full.get("source_tables", []),
