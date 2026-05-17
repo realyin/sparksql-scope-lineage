@@ -57,8 +57,7 @@
     "scope_profile": {
       "type": "object",
       "properties": {
-        "scope_count": { "type": "integer" },
-        "step_count": { "type": "integer" },
+        "profile_step_count": { "type": "integer" },
         "steps": {
           "type": "array",
           "items": {

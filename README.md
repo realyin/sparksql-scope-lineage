@@ -192,7 +192,9 @@ business-logic level:
 - `scope_graph`: the scope-level DAG,
 - `scope_profile`: one processing step per scope, with role, operations,
   physical source tables, joins, filters, aggregations, windows, CASE summaries,
-  key renames, DISTINCT flags, UNION branch counts, and lateral-view expansions,
+  key renames, DISTINCT flags, UNION branch counts, and lateral-view expansions.
+  Parser-only pass-through scopes are omitted, and `profile_step_count` counts
+  only the retained profile steps,
 - `related_metadata`: `input_tables` and `output_tables` metadata. Input table
   entries keep schema `type/comment` when available, fall back to columns
   inferred from scope references when schema is missing, and conservatively keep

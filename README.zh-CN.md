@@ -194,7 +194,8 @@ diagnostics、`scope_profile`，以及 ROOT 字段到物理表字段的端到端
 - `scope_graph`：scope 级 DAG；
 - `scope_profile`：每个 scope 一步加工摘要，包含 role、operations、物理源表、
   joins、filters、aggregations、window、CASE 摘要、关键重命名、DISTINCT 标记、
-  UNION 分支数和 lateral view 展开信息；
+  UNION 分支数和 lateral view 展开信息；解析器产生的纯透传 scope 会被过滤，
+  `profile_step_count` 只统计保留下来的画像步骤；
 - `related_metadata`：拆分为 `input_tables` 和 `output_tables`。输入表优先使用
   schema 中的 `type/comment`，schema 缺失时从 scope 引用字段补齐；遇到星号或
   未解析等不确定引用时，会保守保留该表全部已知字段；

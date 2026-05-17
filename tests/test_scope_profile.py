@@ -40,8 +40,9 @@ def test_scope_profile_summarizes_scope_operations_for_llm_use():
     data = to_dict(parse_scope_lineage(sql, "profile_test"))
     json.dumps(data, ensure_ascii=False)
 
-    assert data["scope_profile"]["scope_count"] == len(data["scopes"])
-    assert data["scope_profile"]["step_count"] == len(data["scope_profile"]["steps"])
+    assert "scope_count" not in data["scope_profile"]
+    assert "step_count" not in data["scope_profile"]
+    assert data["scope_profile"]["profile_step_count"] == len(data["scope_profile"]["steps"])
     assert [s["scope_id"] for s in data["scope_profile"]["steps"]] == [
         "cte:base",
         "cte:agg",
@@ -129,6 +130,32 @@ def test_profile_dict_is_compact_for_llm_preanalysis():
     }
     assert "expression" not in case_item
     assert "case_branches" not in case_item
+
+
+def test_scope_profile_filters_parser_only_pass_through_steps():
+    sql = """
+    INSERT INTO mart.t
+    WITH t_dt AS (
+      SELECT dt FROM ods.calendar WHERE dt = '20260515'
+    )
+    SELECT
+      a.id,
+      d.dt
+    FROM ods.events a
+    LEFT JOIN (
+      SELECT dt FROM t_dt
+    ) d
+      ON a.dt = d.dt
+    """
+
+    data = to_dict(parse_scope_lineage(sql, "profile_passthrough_filter"))
+    step_ids = [step["scope_id"] for step in data["scope_profile"]["steps"]]
+
+    assert "cte:t_dt" in step_ids
+    assert "ROOT" in step_ids
+    assert not any(step_id.startswith("subq:") for step_id in step_ids)
+    assert data["scope_profile"]["profile_step_count"] == len(step_ids)
+    assert data["scope_profile"]["profile_step_count"] < len(data["scopes"])
 
 
 def test_write_output_writes_full_lineage_and_compact_profile(tmp_path):
