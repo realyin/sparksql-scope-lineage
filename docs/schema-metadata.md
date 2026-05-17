@@ -14,11 +14,42 @@ ods.users,country
 ods.users,status
 ```
 
+Optional `type` and `comment` columns are preserved in `related_metadata`:
+
+```csv
+table_name,column_name,type,comment
+ods.users,id,bigint,User ID
+ods.users,status,string,Account status
+```
+
 ## JSON Format
 
 ```json
 {
   "ods.users": ["id", "country", "status"]
+}
+```
+
+Column details can be provided either as direct column objects:
+
+```json
+{
+  "ods.users": [
+    {"name": "id", "type": "bigint", "comment": "User ID"},
+    {"name": "status", "type": "string", "comment": "Account status"}
+  ]
+}
+```
+
+or under `column_details`:
+
+```json
+{
+  "ods.users": {
+    "column_details": [
+      {"name": "id", "type": "bigint", "comment": "User ID"}
+    ]
+  }
 }
 ```
 
@@ -44,3 +75,11 @@ The loader currently:
 - preserves column order from the metadata file
 
 Column order matters for wildcard expansion.
+
+## Related Metadata Output
+
+When schema metadata includes column details, `lineage.json` and `profile.json`
+include `related_metadata`. It contains upstream column metadata that may be
+used by any scope. The filter is conservative: columns that are clearly absent
+from every scope are removed, while wildcard or unresolved references keep all
+known columns for that table.

@@ -12,6 +12,26 @@
       "enum": ["INSERT_OVERWRITE", "INSERT", "CTAS", "MERGE", "UPDATE", "DELETE", "UNKNOWN"]
     },
     "source_tables": { "type": "array", "items": { "type": "string" } },
+    "related_metadata": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "column_details": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name"],
+              "properties": {
+                "name": { "type": "string" },
+                "type": { "type": ["string", "null"] },
+                "comment": { "type": ["string", "null"] }
+              }
+            }
+          }
+        }
+      }
+    },
     "partition_columns": { "type": "array", "items": { "type": "string" } },
     "end_to_end_lineage": {
       "type": "array",

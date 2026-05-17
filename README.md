@@ -193,6 +193,9 @@ business-logic level:
 - `scope_profile`: one processing step per scope, with role, operations,
   physical source tables, joins, filters, aggregations, windows, CASE summaries,
   key renames, DISTINCT flags, UNION branch counts, and lateral-view expansions,
+- `related_metadata`: metadata for upstream columns that may be used by any
+  scope, conservatively keeping all columns for uncertain wildcard or unresolved
+  references,
 - `root_columns`: the target-facing columns,
 - `end_to_end_lineage`: ROOT columns traced back to physical table columns,
   including `trace_complete` and reasons when tracing stops at patterns such as
@@ -266,11 +269,31 @@ ods.users,country
 ods.users,status
 ```
 
+Optional `type` and `comment` columns are preserved in `related_metadata`:
+
+```csv
+table_name,column_name,type,comment
+ods.users,id,bigint,User ID
+ods.users,status,string,Account status
+```
+
 or JSON:
 
 ```json
 {
   "ods.users": ["id", "country", "status"]
+}
+```
+
+Detailed JSON metadata is also supported:
+
+```json
+{
+  "ods.users": {
+    "column_details": [
+      {"name": "id", "type": "bigint", "comment": "User ID"}
+    ]
+  }
 }
 ```
 

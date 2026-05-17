@@ -195,6 +195,8 @@ diagnostics、`scope_profile`，以及 ROOT 字段到物理表字段的端到端
 - `scope_profile`：每个 scope 一步加工摘要，包含 role、operations、物理源表、
   joins、filters、aggregations、window、CASE 摘要、关键重命名、DISTINCT 标记、
   UNION 分支数和 lateral view 展开信息；
+- `related_metadata`：任意 scope 可能用到的上游字段元数据；遇到星号或未解析等
+  不确定引用时，会保守保留该表全部字段；
 - `root_columns`：最终输出字段；
 - `end_to_end_lineage`：ROOT 字段追溯到物理表字段，并带 `trace_complete`；
   遇到未展开星号等中断场景时会给出原因；
@@ -258,11 +260,31 @@ ods.users,country
 ods.users,status
 ```
 
+如果 CSV 中包含可选的 `type` 和 `comment`，会保留到 `related_metadata`：
+
+```csv
+table_name,column_name,type,comment
+ods.users,id,bigint,用户ID
+ods.users,status,string,账号状态
+```
+
 也可以提供 JSON：
 
 ```json
 {
   "ods.users": ["id", "country", "status"]
+}
+```
+
+也支持更完整的 JSON 元数据：
+
+```json
+{
+  "ods.users": {
+    "column_details": [
+      {"name": "id", "type": "bigint", "comment": "用户ID"}
+    ]
+  }
 }
 ```
 

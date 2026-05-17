@@ -116,6 +116,7 @@ class ScopeLineageResult:
     target_table: str
     stmt_kind: str   # INSERT_OVERWRITE|INSERT|CTAS|MERGE|UPDATE|DELETE
     source_tables: List[str] = field(default_factory=list)
+    related_metadata: Dict[str, dict] = field(default_factory=dict)
     scope_graph: ScopeGraph = field(default_factory=ScopeGraph)
     scopes: Dict[str, ScopeData] = field(default_factory=dict)
     diagnostics: Diagnostics = field(default_factory=Diagnostics)

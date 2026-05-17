@@ -112,6 +112,7 @@ def test_profile_dict_is_compact_for_llm_preanalysis():
         "target_table",
         "stmt_kind",
         "source_tables",
+        "related_metadata",
         "scope_graph",
         "scope_profile",
         "root_columns",
@@ -195,3 +196,94 @@ def test_scope_profile_includes_distinct_union_branches_and_lateral_views():
             "output_columns": ["pos", "val"],
         }
     ]
+
+
+def test_related_metadata_keeps_only_columns_used_by_any_scope_when_safe():
+    sql = """
+    INSERT INTO mart.t
+    SELECT
+      a.call_id,
+      CASE WHEN a.risklevel = '高风险' THEN a.phone_number ELSE NULL END AS risky_phone
+    FROM report_csc_ana.hotline_detail_realtime a
+    WHERE a.dt = '20260515'
+    """
+    schema = {
+        "report_csc_ana.hotline_detail_realtime": [
+            {"name": "dt", "type": "date", "comment": None},
+            {"name": "call_id", "type": "string", "comment": "拨打编号"},
+            {"name": "risklevel", "type": "string", "comment": "风险等级"},
+            {"name": "phone_number", "type": "string", "comment": "手机号"},
+            {"name": "unused_col", "type": "string", "comment": "未使用"},
+        ]
+    }
+
+    profile = to_profile_dict(parse_scope_lineage(sql, "metadata_filter", schema=schema))
+
+    assert profile["related_metadata"] == {
+        "report_csc_ana.hotline_detail_realtime": {
+            "column_details": [
+                {"name": "dt", "type": "date", "comment": None},
+                {"name": "call_id", "type": "string", "comment": "拨打编号"},
+                {"name": "risklevel", "type": "string", "comment": "风险等级"},
+                {"name": "phone_number", "type": "string", "comment": "手机号"},
+            ]
+        }
+    }
+
+
+def test_related_metadata_includes_join_fields_without_keeping_whole_join_table():
+    sql = """
+    INSERT INTO mart.t
+    SELECT a.call_id, b.queue_name
+    FROM report_csc_ana.hotline_detail_realtime a
+    LEFT JOIN dim.queue b
+      ON a.queue_id = b.queue_id
+    """
+    schema = {
+        "report_csc_ana.hotline_detail_realtime": [
+            {"name": "call_id", "type": "string", "comment": "拨打编号"},
+            {"name": "queue_id", "type": "string", "comment": "队列ID"},
+            {"name": "unused_a", "type": "string", "comment": None},
+        ],
+        "dim.queue": [
+            {"name": "queue_id", "type": "string", "comment": "队列ID"},
+            {"name": "queue_name", "type": "string", "comment": "队列名称"},
+            {"name": "unused_b", "type": "string", "comment": None},
+        ],
+    }
+
+    profile = to_profile_dict(parse_scope_lineage(sql, "metadata_join", schema=schema))
+
+    assert profile["related_metadata"]["report_csc_ana.hotline_detail_realtime"]["column_details"] == [
+        {"name": "call_id", "type": "string", "comment": "拨打编号"},
+        {"name": "queue_id", "type": "string", "comment": "队列ID"},
+    ]
+    assert profile["related_metadata"]["dim.queue"]["column_details"] == [
+        {"name": "queue_id", "type": "string", "comment": "队列ID"},
+        {"name": "queue_name", "type": "string", "comment": "队列名称"},
+    ]
+
+
+def test_related_metadata_keeps_all_columns_for_uncertain_star_reference():
+    sql = "INSERT INTO mart.t SELECT a.* FROM report_csc_ana.hotline_detail_realtime a"
+    schema = {
+        "report_csc_ana.hotline_detail_realtime": [
+            {"name": "dt", "type": "date", "comment": None},
+            {"name": "call_id", "type": "string", "comment": "拨打编号"},
+            {"name": "begin_call_dt", "type": "string", "comment": None},
+        ]
+    }
+
+    result = parse_scope_lineage(sql, "metadata_star", schema=schema)
+    profile = to_profile_dict(result)
+
+    assert profile["end_to_end_lineage"][0]["trace_complete"] is True
+    assert profile["related_metadata"] == {
+        "report_csc_ana.hotline_detail_realtime": {
+            "column_details": [
+                {"name": "dt", "type": "date", "comment": None},
+                {"name": "call_id", "type": "string", "comment": "拨打编号"},
+                {"name": "begin_call_dt", "type": "string", "comment": None},
+            ]
+        }
+    }
