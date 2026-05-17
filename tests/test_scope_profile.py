@@ -40,8 +40,9 @@ def test_scope_profile_summarizes_scope_operations_for_llm_use():
     data = to_dict(parse_scope_lineage(sql, "profile_test"))
     json.dumps(data, ensure_ascii=False)
 
-    assert data["scope_profile"]["scope_count"] == len(data["scopes"])
-    assert data["scope_profile"]["step_count"] == len(data["scope_profile"]["steps"])
+    assert "scope_count" not in data["scope_profile"]
+    assert "step_count" not in data["scope_profile"]
+    assert data["scope_profile"]["profile_step_count"] == len(data["scope_profile"]["steps"])
     assert [s["scope_id"] for s in data["scope_profile"]["steps"]] == [
         "cte:base",
         "cte:agg",
@@ -80,10 +81,14 @@ def test_scope_profile_summarizes_scope_operations_for_llm_use():
 
     end_to_end = data["end_to_end_lineage"]
     uid_lineage = next(item for item in end_to_end if item["column"] == "uid")
+    assert uid_lineage["trace_complete"] is True
+    assert "trace_incomplete_reasons" not in uid_lineage
     assert uid_lineage["physical_sources"] == [
         {"table": "ods.events", "column": "user_id", "transform": "DIRECT"}
     ]
     call_count_lineage = next(item for item in end_to_end if item["column"] == "call_count")
+    assert call_count_lineage["trace_complete"] is True
+    assert "trace_incomplete_reasons" not in call_count_lineage
     assert call_count_lineage["physical_sources"] == [
         {"table": "ods.calls", "column": "call_id", "transform": "AGGREGATE"}
     ]
@@ -104,10 +109,11 @@ def test_profile_dict_is_compact_for_llm_preanalysis():
     profile = to_profile_dict(parse_scope_lineage(sql, "compact_profile"))
 
     assert set(profile) == {
-        "task_id",
+        "task_name",
         "target_table",
         "stmt_kind",
         "source_tables",
+        "related_metadata",
         "scope_graph",
         "scope_profile",
         "root_columns",
@@ -124,6 +130,32 @@ def test_profile_dict_is_compact_for_llm_preanalysis():
     }
     assert "expression" not in case_item
     assert "case_branches" not in case_item
+
+
+def test_scope_profile_filters_parser_only_pass_through_steps():
+    sql = """
+    INSERT INTO mart.t
+    WITH t_dt AS (
+      SELECT dt FROM ods.calendar WHERE dt = '20260515'
+    )
+    SELECT
+      a.id,
+      d.dt
+    FROM ods.events a
+    LEFT JOIN (
+      SELECT dt FROM t_dt
+    ) d
+      ON a.dt = d.dt
+    """
+
+    data = to_dict(parse_scope_lineage(sql, "profile_passthrough_filter"))
+    step_ids = [step["scope_id"] for step in data["scope_profile"]["steps"]]
+
+    assert "cte:t_dt" in step_ids
+    assert "ROOT" in step_ids
+    assert not any(step_id.startswith("subq:") for step_id in step_ids)
+    assert data["scope_profile"]["profile_step_count"] == len(step_ids)
+    assert data["scope_profile"]["profile_step_count"] < len(data["scopes"])
 
 
 def test_write_output_writes_full_lineage_and_compact_profile(tmp_path):
@@ -143,3 +175,203 @@ def test_write_output_writes_full_lineage_and_compact_profile(tmp_path):
     assert profile["end_to_end_lineage"][0]["physical_sources"] == [
         {"table": "ods.src", "column": "id", "transform": "DIRECT"}
     ]
+
+
+def test_end_to_end_lineage_marks_unexpanded_star_incomplete():
+    result = parse_scope_lineage(
+        "INSERT INTO mart.t SELECT a.* FROM ods.src a",
+        "star_incomplete",
+    )
+
+    item = to_profile_dict(result)["end_to_end_lineage"][0]
+
+    assert item["column"] == "a.*"
+    assert item["trace_complete"] is False
+    assert item["trace_incomplete_reasons"] == ["star_not_expanded"]
+    assert item["physical_sources"] == [
+        {"table": "ods.src", "column": "*", "transform": "EXPAND_ALL"}
+    ]
+
+
+def test_scope_profile_includes_distinct_union_branches_and_lateral_views():
+    sql = """
+    INSERT INTO mart.t
+    WITH dedup AS (
+      SELECT DISTINCT a.id FROM ods.src a
+    )
+    SELECT id, 'dedup' AS src FROM dedup
+    UNION ALL
+    SELECT t.val, 'explode' AS src
+    FROM ods.arrays a
+    LATERAL VIEW posexplode(split(a.payload, ',')) t AS pos, val
+    """
+
+    profile = to_profile_dict(parse_scope_lineage(sql, "logic_patterns"))
+
+    dedup = _step_by_scope(profile, "cte:dedup")
+    assert dedup["logic"]["distinct"] is True
+
+    union = next(s for s in profile["scope_profile"]["steps"] if s["kind"] == "union")
+    assert union["logic"]["union_branches"] == 2
+
+    lateral = _step_by_scope(profile, "udtf:t")
+    assert lateral["logic"]["lateral_views"] == [
+        {
+            "alias": "t",
+            "function": "POSEXPLODE",
+            "expression": "POSEXPLODE(SPLIT(a.payload, ','))",
+            "output_columns": ["pos", "val"],
+        }
+    ]
+
+
+def test_related_metadata_keeps_only_columns_used_by_any_scope_when_safe():
+    sql = """
+    INSERT INTO mart.t
+    SELECT
+      a.call_id,
+      CASE WHEN a.risklevel = '高风险' THEN a.phone_number ELSE NULL END AS risky_phone
+    FROM report_csc_ana.hotline_detail_realtime a
+    WHERE a.dt = '20260515'
+    """
+    schema = {
+        "report_csc_ana.hotline_detail_realtime": [
+            {"name": "dt", "type": "date", "comment": None},
+            {"name": "call_id", "type": "string", "comment": "拨打编号"},
+            {"name": "risklevel", "type": "string", "comment": "风险等级"},
+            {"name": "phone_number", "type": "string", "comment": "手机号"},
+            {"name": "unused_col", "type": "string", "comment": "未使用"},
+        ]
+    }
+
+    profile = to_profile_dict(parse_scope_lineage(sql, "metadata_filter", schema=schema))
+
+    assert profile["related_metadata"] == {
+        "input_tables": {
+            "report_csc_ana.hotline_detail_realtime": {
+                "column_details": [
+                    {"name": "dt", "type": "date", "comment": None},
+                    {"name": "call_id", "type": "string", "comment": "拨打编号"},
+                    {"name": "risklevel", "type": "string", "comment": "风险等级"},
+                    {"name": "phone_number", "type": "string", "comment": "手机号"},
+                ],
+                "metadata_complete": True,
+            }
+        },
+        "output_tables": {
+            "mart.t": {
+                "column_details": [
+                    {"name": "call_id", "type": None, "comment": None},
+                    {"name": "risky_phone", "type": None, "comment": None},
+                ],
+                "metadata_complete": False,
+            }
+        },
+    }
+
+
+def test_related_metadata_includes_join_fields_without_keeping_whole_join_table():
+    sql = """
+    INSERT INTO mart.t
+    SELECT a.call_id, b.queue_name
+    FROM report_csc_ana.hotline_detail_realtime a
+    LEFT JOIN dim.queue b
+      ON a.queue_id = b.queue_id
+    """
+    schema = {
+        "report_csc_ana.hotline_detail_realtime": [
+            {"name": "call_id", "type": "string", "comment": "拨打编号"},
+            {"name": "queue_id", "type": "string", "comment": "队列ID"},
+            {"name": "unused_a", "type": "string", "comment": None},
+        ],
+        "dim.queue": [
+            {"name": "queue_id", "type": "string", "comment": "队列ID"},
+            {"name": "queue_name", "type": "string", "comment": "队列名称"},
+            {"name": "unused_b", "type": "string", "comment": None},
+        ],
+    }
+
+    profile = to_profile_dict(parse_scope_lineage(sql, "metadata_join", schema=schema))
+
+    assert profile["related_metadata"]["input_tables"]["report_csc_ana.hotline_detail_realtime"]["column_details"] == [
+        {"name": "call_id", "type": "string", "comment": "拨打编号"},
+        {"name": "queue_id", "type": "string", "comment": "队列ID"},
+    ]
+    assert profile["related_metadata"]["input_tables"]["dim.queue"]["column_details"] == [
+        {"name": "queue_id", "type": "string", "comment": "队列ID"},
+        {"name": "queue_name", "type": "string", "comment": "队列名称"},
+    ]
+
+
+def test_related_metadata_keeps_all_columns_for_uncertain_star_reference():
+    sql = "INSERT INTO mart.t SELECT a.* FROM report_csc_ana.hotline_detail_realtime a"
+    schema = {
+        "report_csc_ana.hotline_detail_realtime": [
+            {"name": "dt", "type": "date", "comment": None},
+            {"name": "call_id", "type": "string", "comment": "拨打编号"},
+            {"name": "begin_call_dt", "type": "string", "comment": None},
+        ]
+    }
+
+    result = parse_scope_lineage(sql, "metadata_star", schema=schema)
+    profile = to_profile_dict(result)
+
+    assert profile["end_to_end_lineage"][0]["trace_complete"] is True
+    assert profile["related_metadata"] == {
+        "input_tables": {
+            "report_csc_ana.hotline_detail_realtime": {
+                "column_details": [
+                    {"name": "dt", "type": "date", "comment": None},
+                    {"name": "call_id", "type": "string", "comment": "拨打编号"},
+                    {"name": "begin_call_dt", "type": "string", "comment": None},
+                ],
+                "metadata_complete": True,
+            }
+        },
+        "output_tables": {
+            "mart.t": {
+                "column_details": [
+                    {"name": "dt", "type": None, "comment": None},
+                    {"name": "call_id", "type": None, "comment": None},
+                    {"name": "begin_call_dt", "type": None, "comment": None},
+                ],
+                "metadata_complete": False,
+            }
+        },
+    }
+
+
+def test_related_metadata_includes_input_tables_missing_from_schema():
+    sql = """
+    INSERT INTO mart.t
+    SELECT a.id, b.score
+    FROM ods.known a
+    LEFT JOIN ods.missing b
+      ON a.id = b.id
+    WHERE b.dt = '20260515'
+    """
+    schema = {
+        "ods.known": [
+            {"name": "id", "type": "string", "comment": "ID"},
+            {"name": "unused", "type": "string", "comment": "未使用"},
+        ]
+    }
+
+    profile = to_profile_dict(parse_scope_lineage(sql, "metadata_missing_schema", schema=schema))
+
+    assert "task_id" not in profile
+    assert profile["task_name"] == "metadata_missing_schema"
+    assert profile["related_metadata"]["input_tables"] == {
+        "ods.known": {
+            "column_details": [{"name": "id", "type": "string", "comment": "ID"}],
+            "metadata_complete": True,
+        },
+        "ods.missing": {
+            "column_details": [
+                {"name": "score", "type": None, "comment": None},
+                {"name": "id", "type": None, "comment": None},
+                {"name": "dt", "type": None, "comment": None},
+            ],
+            "metadata_complete": False,
+        },
+    }

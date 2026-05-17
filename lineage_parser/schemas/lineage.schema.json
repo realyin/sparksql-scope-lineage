@@ -12,15 +12,33 @@
       "enum": ["INSERT_OVERWRITE", "INSERT", "CTAS", "MERGE", "UPDATE", "DELETE", "UNKNOWN"]
     },
     "source_tables": { "type": "array", "items": { "type": "string" } },
+    "related_metadata": {
+      "type": "object",
+      "properties": {
+        "input_tables": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/table_metadata" }
+        },
+        "output_tables": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/table_metadata" }
+        }
+      }
+    },
     "partition_columns": { "type": "array", "items": { "type": "string" } },
     "end_to_end_lineage": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["column", "transform", "physical_sources"],
+        "required": ["column", "transform", "trace_complete", "physical_sources"],
         "properties": {
           "column": { "type": "string" },
           "transform": { "type": "string" },
+          "trace_complete": { "type": "boolean" },
+          "trace_incomplete_reasons": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
           "physical_sources": {
             "type": "array",
             "items": {
@@ -39,8 +57,7 @@
     "scope_profile": {
       "type": "object",
       "properties": {
-        "scope_count": { "type": "integer" },
-        "step_count": { "type": "integer" },
+        "profile_step_count": { "type": "integer" },
         "steps": {
           "type": "array",
           "items": {
@@ -73,7 +90,10 @@
                   "aggregations": { "type": "array" },
                   "window_functions": { "type": "array" },
                   "case_when": { "type": "array" },
-                  "key_renames": { "type": "array" }
+                  "key_renames": { "type": "array" },
+                  "distinct": { "type": "boolean" },
+                  "union_branches": { "type": "integer" },
+                  "lateral_views": { "type": "array" }
                 }
               }
             }
@@ -109,6 +129,8 @@
             "type": "string",
             "enum": ["physical_table", "cte", "subquery", "union", "union_branch", "root"]
           },
+          "distinct": { "type": "boolean" },
+          "lateral_views": { "type": "array" },
           "depends_on": { "type": "array", "items": { "type": "string" } },
           "columns": {
             "type": "array",
@@ -156,6 +178,27 @@
           }
         },
         "stats": { "type": "object" }
+      }
+    }
+  },
+  "definitions": {
+    "table_metadata": {
+      "type": "object",
+      "required": ["column_details", "metadata_complete"],
+      "properties": {
+        "column_details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "type": ["string", "null"] },
+              "comment": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "metadata_complete": { "type": "boolean" }
       }
     }
   }

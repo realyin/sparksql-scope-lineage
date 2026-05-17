@@ -20,6 +20,8 @@ from .parser import (
     _collect_union_branches,
     _normalize_table_name,
 )
+from .related_metadata import build_related_metadata
+from .schema_metadata import SchemaMap, normalize_schema_map
 from .scope_types import (
     ScopeData,
     ScopeGraph,
@@ -58,6 +60,7 @@ def parse_scope_lineage(
     sql: str, task_name: str, schema: dict | None = None
 ) -> ScopeLineageResult:
     """Parse SQL into a scope-based lineage result with full column resolution."""
+    schema = _prepare_schema(schema)
     insert_trees = _collect_insert_trees(sql)
     if not insert_trees:
         raise ValueError("No INSERT/MERGE statement found")
@@ -77,6 +80,7 @@ def parse_all_scope_lineage(
     sql: str, task_name: str, schema: dict | None = None
 ) -> list[ScopeLineageResult]:
     """Parse all INSERT/MERGE statements; return one ScopeLineageResult per target."""
+    schema = _prepare_schema(schema)
     insert_trees = _collect_insert_trees(sql)
     if not insert_trees:
         raise ValueError("No INSERT/MERGE statement found")
@@ -253,10 +257,12 @@ def _build_result_from_scope(
             # Already created by _create_union_scopes_recursive (e.g. union scope or branch)
             if alias_in_parent:
                 result.scopes[scope_id].alias_in_parent = alias_in_parent
+            result.scopes[scope_id].distinct = _scope_has_distinct(sg_scope)
             continue
 
         result.scopes[scope_id] = ScopeData(
             kind=kind,
+            distinct=_scope_has_distinct(sg_scope),
             alias_in_parent=alias_in_parent,
         )
 
@@ -279,6 +285,13 @@ def _build_result_from_scope(
 
     # Step 5: Resolve columns for all scopes
     resolve_all(result, root_scope, all_scopes, schema)
+    result.related_metadata = build_related_metadata(result, schema)
+
+
+def _prepare_schema(schema: dict | None) -> dict | None:
+    if schema is None or isinstance(schema, SchemaMap):
+        return schema
+    return normalize_schema_map(schema)
 
 
 def _build_source_expression(insert: exp.Insert) -> exp.Expression:
@@ -486,6 +499,13 @@ def _scope_kind(sg_scope: Scope) -> str:
     if sg_scope.is_udtf:
         return "subquery"
     return "unknown"
+
+
+def _scope_has_distinct(sg_scope: Scope) -> bool:
+    """Return whether a sqlglot SELECT scope uses DISTINCT."""
+    return isinstance(sg_scope.expression, exp.Select) and bool(
+        sg_scope.expression.args.get("distinct")
+    )
 
 
 def _find_alias_in_parent(sg_scope: Scope) -> str | None:

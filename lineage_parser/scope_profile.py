@@ -13,15 +13,23 @@ def build_scope_profile(result: ScopeLineageResult) -> dict[str, Any]:
     The profile is intentionally derived from the existing scope graph instead
     of becoming a second source of lineage truth.
     """
-    steps = [
+    all_steps = [
         _scope_step(result, scope_id, scope_data)
         for scope_id, scope_data in _ordered_scopes(result)
     ]
+    steps = [step for step in all_steps if not _is_parser_only_pass_through_step(step)]
     return {
-        "scope_count": len(result.scopes),
-        "step_count": len(steps),
+        "profile_step_count": len(steps),
         "steps": steps,
     }
+
+
+def _is_parser_only_pass_through_step(step: dict[str, Any]) -> bool:
+    if step["scope_id"] == "ROOT":
+        return False
+    if step["role"] != "pass_through":
+        return False
+    return set(step["operations"]) <= {"pass_through", "rename"}
 
 
 def _ordered_scopes(result: ScopeLineageResult) -> list[tuple[str, ScopeData]]:
@@ -84,6 +92,9 @@ def _scope_step(
             "window_functions": [_column_logic(c) for c in scope_data.columns if c.transform == "WINDOW"],
             "case_when": [_column_logic(c) for c in scope_data.columns if c.transform == "CONDITIONAL"],
             "key_renames": _key_renames(scope_data),
+            "distinct": bool(scope_data.distinct),
+            "union_branches": len(scope_data.branches or []),
+            "lateral_views": _json_safe(scope_data.lateral_views),
         },
     }
 
@@ -118,6 +129,10 @@ def _operations(scope_data: ScopeData) -> list[str]:
     operations: list[str] = []
     if scope_data.kind in ("union", "union_branch") or scope_data.set_op:
         operations.append("union")
+    if scope_data.distinct:
+        operations.append("distinct")
+    if scope_data.lateral_views:
+        operations.append("lateral_view")
     if scope_data.joins:
         operations.append("join")
     if scope_data.filters or scope_data.having:

@@ -133,10 +133,11 @@ def to_profile_dict(result: ScopeLineageResult) -> dict:
     full = to_dict(result)
     root = full.get("scopes", {}).get("ROOT", {})
     return {
-        "task_id": full["task_id"],
+        "task_name": full["task_id"],
         "target_table": full["target_table"],
         "stmt_kind": full["stmt_kind"],
         "source_tables": full.get("source_tables", []),
+        "related_metadata": full.get("related_metadata", {}),
         "scope_graph": full.get("scope_graph", {}),
         "scope_profile": full.get("scope_profile", {}),
         "root_columns": root.get("columns", []),
@@ -197,6 +198,7 @@ def _result_to_dict(r: ScopeLineageResult) -> dict:
         "target_table": r.target_table,
         "stmt_kind": r.stmt_kind,
         "source_tables": r.source_tables,
+        "related_metadata": r.related_metadata,
         "scope_graph": to_dict(r.scope_graph),
         "scopes": {k: to_dict(v) for k, v in r.scopes.items()},
         "scope_profile": build_scope_profile(r),
@@ -210,6 +212,8 @@ def _scope_data_to_dict(sd: ScopeData) -> dict:
     d: dict[str, Any] = {"kind": sd.kind}
     if sd.role is not None:
         d["role"] = sd.role
+    if sd.distinct:
+        d["distinct"] = sd.distinct
     d["depends_on"] = sd.depends_on if sd.depends_on else []
     if sd.writes_to is not None:
         d["writes_to"] = sd.writes_to
@@ -226,6 +230,8 @@ def _scope_data_to_dict(sd: ScopeData) -> dict:
         d["having"] = [to_dict(h) for h in sd.having]
     if sd.order_by:
         d["order_by"] = sd.order_by
+    if sd.lateral_views:
+        d["lateral_views"] = to_dict(sd.lateral_views)
     if sd.set_op is not None:
         d["set_op"] = sd.set_op
     if sd.branches is not None:

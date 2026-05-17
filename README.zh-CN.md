@@ -193,9 +193,15 @@ diagnostics、`scope_profile`，以及 ROOT 字段到物理表字段的端到端
 
 - `scope_graph`：scope 级 DAG；
 - `scope_profile`：每个 scope 一步加工摘要，包含 role、operations、物理源表、
-  joins、filters、aggregations、window、CASE 摘要和关键重命名；
+  joins、filters、aggregations、window、CASE 摘要、关键重命名、DISTINCT 标记、
+  UNION 分支数和 lateral view 展开信息；解析器产生的纯透传 scope 会被过滤，
+  `profile_step_count` 只统计保留下来的画像步骤；
+- `related_metadata`：拆分为 `input_tables` 和 `output_tables`。输入表优先使用
+  schema 中的 `type/comment`，schema 缺失时从 scope 引用字段补齐；遇到星号或
+  未解析等不确定引用时，会保守保留该表全部已知字段；
 - `root_columns`：最终输出字段；
-- `end_to_end_lineage`：ROOT 字段追溯到物理表字段；
+- `end_to_end_lineage`：ROOT 字段追溯到物理表字段，并带 `trace_complete`；
+  只有遇到未展开星号等中断场景时才输出 `trace_incomplete_reasons`；
 - `diagnostics`：warning 和解析置信度信号。
 
 `report.html` 是自包含的离线可视化报告，包含 scope DAG、ROOT 字段表、单字段
@@ -256,11 +262,31 @@ ods.users,country
 ods.users,status
 ```
 
+如果 CSV 中包含可选的 `type` 和 `comment`，会保留到 `related_metadata`：
+
+```csv
+table_name,column_name,type,comment
+ods.users,id,bigint,用户ID
+ods.users,status,string,账号状态
+```
+
 也可以提供 JSON：
 
 ```json
 {
   "ods.users": ["id", "country", "status"]
+}
+```
+
+也支持更完整的 JSON 元数据：
+
+```json
+{
+  "ods.users": {
+    "column_details": [
+      {"name": "id", "type": "bigint", "comment": "用户ID"}
+    ]
+  }
 }
 ```
 

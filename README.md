@@ -192,9 +192,17 @@ business-logic level:
 - `scope_graph`: the scope-level DAG,
 - `scope_profile`: one processing step per scope, with role, operations,
   physical source tables, joins, filters, aggregations, windows, CASE summaries,
-  and key renames,
+  key renames, DISTINCT flags, UNION branch counts, and lateral-view expansions.
+  Parser-only pass-through scopes are omitted, and `profile_step_count` counts
+  only the retained profile steps,
+- `related_metadata`: `input_tables` and `output_tables` metadata. Input table
+  entries keep schema `type/comment` when available, fall back to columns
+  inferred from scope references when schema is missing, and conservatively keep
+  all known columns for wildcard or unresolved references,
 - `root_columns`: the target-facing columns,
 - `end_to_end_lineage`: ROOT columns traced back to physical table columns,
+  including `trace_complete`; `trace_incomplete_reasons` is emitted only when
+  tracing stops at patterns such as unexpanded stars,
 - `diagnostics`: warnings and parser confidence signals.
 
 `report.html` is a self-contained offline visual report with a scope DAG, ROOT
@@ -264,11 +272,31 @@ ods.users,country
 ods.users,status
 ```
 
+Optional `type` and `comment` columns are preserved in `related_metadata`:
+
+```csv
+table_name,column_name,type,comment
+ods.users,id,bigint,User ID
+ods.users,status,string,Account status
+```
+
 or JSON:
 
 ```json
 {
   "ods.users": ["id", "country", "status"]
+}
+```
+
+Detailed JSON metadata is also supported:
+
+```json
+{
+  "ods.users": {
+    "column_details": [
+      {"name": "id", "type": "bigint", "comment": "User ID"}
+    ]
+  }
 }
 ```
 

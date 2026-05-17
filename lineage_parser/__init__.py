@@ -1,6 +1,6 @@
 from .types import Column, ColumnRef, JoinKey, LineageResult, Unresolved
 from .parser import load_schema, parse_all_lineage, parse_lineage
-from .schema_metadata import DictSchemaProvider, materialize_schema
+from .schema_metadata import DictSchemaProvider, column_details_for_table, materialize_schema
 from .html_report import render_html, write_html_report, write_html_report_from_dir
 from .scope_types import (
     ScopeColumn,
@@ -36,6 +36,7 @@ __all__ = [
     "Unresolved",
     "load_schema",
     "DictSchemaProvider",
+    "column_details_for_table",
     "materialize_schema",
     "parse_all_lineage",
     "parse_lineage",
