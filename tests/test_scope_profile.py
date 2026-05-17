@@ -80,10 +80,14 @@ def test_scope_profile_summarizes_scope_operations_for_llm_use():
 
     end_to_end = data["end_to_end_lineage"]
     uid_lineage = next(item for item in end_to_end if item["column"] == "uid")
+    assert uid_lineage["trace_complete"] is True
+    assert uid_lineage["trace_incomplete_reasons"] == []
     assert uid_lineage["physical_sources"] == [
         {"table": "ods.events", "column": "user_id", "transform": "DIRECT"}
     ]
     call_count_lineage = next(item for item in end_to_end if item["column"] == "call_count")
+    assert call_count_lineage["trace_complete"] is True
+    assert call_count_lineage["trace_incomplete_reasons"] == []
     assert call_count_lineage["physical_sources"] == [
         {"table": "ods.calls", "column": "call_id", "transform": "AGGREGATE"}
     ]
@@ -142,4 +146,52 @@ def test_write_output_writes_full_lineage_and_compact_profile(tmp_path):
     assert "scopes" in lineage
     assert profile["end_to_end_lineage"][0]["physical_sources"] == [
         {"table": "ods.src", "column": "id", "transform": "DIRECT"}
+    ]
+
+
+def test_end_to_end_lineage_marks_unexpanded_star_incomplete():
+    result = parse_scope_lineage(
+        "INSERT INTO mart.t SELECT a.* FROM ods.src a",
+        "star_incomplete",
+    )
+
+    item = to_profile_dict(result)["end_to_end_lineage"][0]
+
+    assert item["column"] == "a.*"
+    assert item["trace_complete"] is False
+    assert item["trace_incomplete_reasons"] == ["star_not_expanded"]
+    assert item["physical_sources"] == [
+        {"table": "ods.src", "column": "*", "transform": "EXPAND_ALL"}
+    ]
+
+
+def test_scope_profile_includes_distinct_union_branches_and_lateral_views():
+    sql = """
+    INSERT INTO mart.t
+    WITH dedup AS (
+      SELECT DISTINCT a.id FROM ods.src a
+    )
+    SELECT id, 'dedup' AS src FROM dedup
+    UNION ALL
+    SELECT t.val, 'explode' AS src
+    FROM ods.arrays a
+    LATERAL VIEW posexplode(split(a.payload, ',')) t AS pos, val
+    """
+
+    profile = to_profile_dict(parse_scope_lineage(sql, "logic_patterns"))
+
+    dedup = _step_by_scope(profile, "cte:dedup")
+    assert dedup["logic"]["distinct"] is True
+
+    union = next(s for s in profile["scope_profile"]["steps"] if s["kind"] == "union")
+    assert union["logic"]["union_branches"] == 2
+
+    lateral = _step_by_scope(profile, "udtf:t")
+    assert lateral["logic"]["lateral_views"] == [
+        {
+            "alias": "t",
+            "function": "POSEXPLODE",
+            "expression": "POSEXPLODE(SPLIT(a.payload, ','))",
+            "output_columns": ["pos", "val"],
+        }
     ]

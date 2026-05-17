@@ -84,6 +84,9 @@ def _scope_step(
             "window_functions": [_column_logic(c) for c in scope_data.columns if c.transform == "WINDOW"],
             "case_when": [_column_logic(c) for c in scope_data.columns if c.transform == "CONDITIONAL"],
             "key_renames": _key_renames(scope_data),
+            "distinct": bool(scope_data.distinct),
+            "union_branches": len(scope_data.branches or []),
+            "lateral_views": _json_safe(scope_data.lateral_views),
         },
     }
 
@@ -118,6 +121,10 @@ def _operations(scope_data: ScopeData) -> list[str]:
     operations: list[str] = []
     if scope_data.kind in ("union", "union_branch") or scope_data.set_op:
         operations.append("union")
+    if scope_data.distinct:
+        operations.append("distinct")
+    if scope_data.lateral_views:
+        operations.append("lateral_view")
     if scope_data.joins:
         operations.append("join")
     if scope_data.filters or scope_data.having:

@@ -17,10 +17,15 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["column", "transform", "physical_sources"],
+        "required": ["column", "transform", "trace_complete", "trace_incomplete_reasons", "physical_sources"],
         "properties": {
           "column": { "type": "string" },
           "transform": { "type": "string" },
+          "trace_complete": { "type": "boolean" },
+          "trace_incomplete_reasons": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
           "physical_sources": {
             "type": "array",
             "items": {
@@ -73,7 +78,10 @@
                   "aggregations": { "type": "array" },
                   "window_functions": { "type": "array" },
                   "case_when": { "type": "array" },
-                  "key_renames": { "type": "array" }
+                  "key_renames": { "type": "array" },
+                  "distinct": { "type": "boolean" },
+                  "union_branches": { "type": "integer" },
+                  "lateral_views": { "type": "array" }
                 }
               }
             }
@@ -109,6 +117,8 @@
             "type": "string",
             "enum": ["physical_table", "cte", "subquery", "union", "union_branch", "root"]
           },
+          "distinct": { "type": "boolean" },
+          "lateral_views": { "type": "array" },
           "depends_on": { "type": "array", "items": { "type": "string" } },
           "columns": {
             "type": "array",

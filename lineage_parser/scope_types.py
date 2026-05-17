@@ -59,6 +59,7 @@ class ScopeData:
     """All data for a single scope (CTE, subquery, UNION branch, or ROOT)."""
     kind: str          # cte|subquery|union|union_branch|root
     role: Optional[str] = None
+    distinct: bool = False
     depends_on: List[str] = field(default_factory=list)
     writes_to: Optional[str] = None
     alias_in_parent: Optional[str] = None
@@ -68,6 +69,7 @@ class ScopeData:
     group_by: List[SourceRef] = field(default_factory=list)
     having: List[ScopeFilter] = field(default_factory=list)
     order_by: List[dict] = field(default_factory=list)
+    lateral_views: List[dict] = field(default_factory=list)
     # Union-specific:
     set_op: Optional[str] = None
     branches: Optional[List[str]] = None

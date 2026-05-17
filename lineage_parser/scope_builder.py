@@ -253,10 +253,12 @@ def _build_result_from_scope(
             # Already created by _create_union_scopes_recursive (e.g. union scope or branch)
             if alias_in_parent:
                 result.scopes[scope_id].alias_in_parent = alias_in_parent
+            result.scopes[scope_id].distinct = _scope_has_distinct(sg_scope)
             continue
 
         result.scopes[scope_id] = ScopeData(
             kind=kind,
+            distinct=_scope_has_distinct(sg_scope),
             alias_in_parent=alias_in_parent,
         )
 
@@ -486,6 +488,13 @@ def _scope_kind(sg_scope: Scope) -> str:
     if sg_scope.is_udtf:
         return "subquery"
     return "unknown"
+
+
+def _scope_has_distinct(sg_scope: Scope) -> bool:
+    """Return whether a sqlglot SELECT scope uses DISTINCT."""
+    return isinstance(sg_scope.expression, exp.Select) and bool(
+        sg_scope.expression.args.get("distinct")
+    )
 
 
 def _find_alias_in_parent(sg_scope: Scope) -> str | None:

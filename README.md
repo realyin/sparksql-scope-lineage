@@ -192,9 +192,11 @@ business-logic level:
 - `scope_graph`: the scope-level DAG,
 - `scope_profile`: one processing step per scope, with role, operations,
   physical source tables, joins, filters, aggregations, windows, CASE summaries,
-  and key renames,
+  key renames, DISTINCT flags, UNION branch counts, and lateral-view expansions,
 - `root_columns`: the target-facing columns,
 - `end_to_end_lineage`: ROOT columns traced back to physical table columns,
+  including `trace_complete` and reasons when tracing stops at patterns such as
+  unexpanded stars,
 - `diagnostics`: warnings and parser confidence signals.
 
 `report.html` is a self-contained offline visual report with a scope DAG, ROOT

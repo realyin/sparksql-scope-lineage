@@ -448,6 +448,14 @@ def _resolve_lateral_scope(
     if not names:
         return
 
+    if inner is not None:
+        scope_data.lateral_views.append({
+            "alias": _lateral_alias_name(alias, scope_id),
+            "function": _lateral_function_name(inner),
+            "expression": _compact_sql(inner),
+            "output_columns": list(names),
+        })
+
     sources = _resolve_column_refs_in_expr(inner, sg_scope, result, schema)
     for name in names:
         scope_data.columns.append(ScopeColumn(
@@ -456,6 +464,29 @@ def _resolve_lateral_scope(
             expression=inner.sql(dialect=DIALECT) if inner is not None else "",
             sources=list(sources),
         ))
+
+
+def _lateral_alias_name(alias: exp.Expression | None, scope_id: str) -> str:
+    if alias is not None and alias.this is not None:
+        return alias.this.name if hasattr(alias.this, "name") else str(alias.this)
+    if ":" in scope_id:
+        return scope_id.split(":", 1)[1]
+    return scope_id
+
+
+def _compact_sql(expression: exp.Expression) -> str:
+    return expression.sql(dialect=DIALECT).replace("`", "")
+
+
+def _lateral_function_name(inner: exp.Expression) -> str:
+    if isinstance(inner, exp.Posexplode):
+        return "POSEXPLODE"
+    if isinstance(inner, exp.Explode):
+        return "EXPLODE"
+    if isinstance(inner, exp.Inline):
+        return "INLINE"
+    key = getattr(inner, "key", "") or inner.__class__.__name__
+    return str(key).upper()
 
 
 def _infer_lateral_output_names(inner: exp.Expression | None) -> list[str]:
