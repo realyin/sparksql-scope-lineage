@@ -190,10 +190,14 @@ intermediate `scopes` payload and keeps the pieces that explain the SQL at a
 business-logic level:
 
 - `scope_profile`: one processing step per scope, with role, operations,
-  physical source tables, joins, filters, aggregations, windows, CASE summaries,
-  key renames, DISTINCT flags, UNION branch counts, and lateral-view expansions.
-  Parser-only pass-through scopes are omitted, and `profile_step_count` counts
-  only the retained profile steps,
+  business summaries, physical source tables, joins, filters, aggregations,
+  windows, CASE summaries, key renames, DISTINCT flags, UNION branch counts, and
+  lateral-view expansions. Parser-only pass-through scopes are omitted, and
+  `profile_step_count` counts only the retained profile steps,
+- `summary`, `grain`, `important_columns`, `filters_summary`, and
+  `expression_catalog`: lightweight LLM reading aids that summarize the task,
+  infer the likely row grain, highlight key/derived/metric-like output columns,
+  gather important filters, and de-duplicate notable expression patterns,
 - `related_metadata`: `input_tables` and `output_tables` metadata. Entries keep
   schema `type/comment` when available. Input tables fall back to columns
   inferred from scope references when schema is missing, and conservatively keep

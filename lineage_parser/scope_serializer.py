@@ -35,10 +35,14 @@ _SCHEMA_PATH = Path(__file__).parent / "schemas" / "lineage.schema.json"
 _schema_cache: dict | None = None
 
 PROFILE_MAX_EXPRESSION_CHARS = 200
-PROFILE_MAX_METADATA_COLUMNS_PER_TABLE = 10
+PROFILE_MAX_METADATA_COLUMNS_PER_TABLE = 8
 PROFILE_MAX_PHYSICAL_SOURCES_PER_COLUMN = 5
 PROFILE_MAX_LOGIC_ITEMS_PER_TYPE = 10
 PROFILE_MAX_WARNINGS = 20
+PROFILE_MAX_SOURCE_TABLES = 30
+PROFILE_MAX_IMPORTANT_COLUMNS = 12
+PROFILE_MAX_FILTERS_SUMMARY = 30
+PROFILE_MAX_EXPRESSION_CATALOG = 30
 
 
 def _load_schema() -> dict:
@@ -147,6 +151,7 @@ def to_profile_dict(result: ScopeLineageResult) -> dict:
         "end_to_end_lineage": full.get("end_to_end_lineage", []),
         "diagnostics": full.get("diagnostics", {}),
     }
+    profile.update(_build_llm_profile_indexes(profile))
     return _compact_profile(profile)
 
 
@@ -157,11 +162,222 @@ def to_profile_json(result: ScopeLineageResult, indent: int = 2) -> str:
 
 def _compact_profile(profile: dict) -> dict:
     profile = _copy.deepcopy(profile)
+    _compact_list_field(profile, "source_tables", PROFILE_MAX_SOURCE_TABLES)
     _compact_related_metadata(profile.get("related_metadata", {}))
     _compact_end_to_end_lineage(profile.get("end_to_end_lineage", []))
     _compact_scope_profile(profile.get("scope_profile", {}))
+    _compact_list_field(profile, "filters_summary", PROFILE_MAX_FILTERS_SUMMARY)
+    _compact_list_field(profile, "expression_catalog", PROFILE_MAX_EXPRESSION_CATALOG)
     profile["diagnostics"] = _compact_profile_diagnostics(profile.get("diagnostics", {}))
     return profile
+
+
+def _build_llm_profile_indexes(profile: dict) -> dict:
+    end_to_end = profile.get("end_to_end_lineage", [])
+    steps = profile.get("scope_profile", {}).get("steps", [])
+    operations = _unique(
+        operation
+        for step in steps
+        for operation in step.get("operations", [])
+        if operation != "pass_through"
+    )
+    output_columns = [item.get("column") for item in end_to_end if item.get("column")]
+    return {
+        "summary": _build_profile_summary(profile, operations, output_columns),
+        "grain": _infer_grain(end_to_end, steps),
+        "important_columns": _build_important_columns(end_to_end),
+        "expression_catalog": _build_expression_catalog(end_to_end, steps),
+        "filters_summary": _build_filters_summary(steps),
+        "read_order": [
+            "summary",
+            "grain",
+            "scope_profile.steps",
+            "important_columns",
+            "end_to_end_lineage",
+            "related_metadata",
+        ],
+        "compact_policy": {
+            "max_expression_chars": PROFILE_MAX_EXPRESSION_CHARS,
+            "max_source_tables": PROFILE_MAX_SOURCE_TABLES,
+            "max_metadata_columns_per_table": PROFILE_MAX_METADATA_COLUMNS_PER_TABLE,
+            "max_physical_sources_per_column": PROFILE_MAX_PHYSICAL_SOURCES_PER_COLUMN,
+            "full_detail_files": ["lineage.json", "diagnostics.json"],
+        },
+    }
+
+
+def _build_profile_summary(profile: dict, operations: list[str], output_columns: list[str]) -> dict:
+    source_tables = profile.get("source_tables") or []
+    target_table = profile.get("target_table")
+    summary = {
+        "task_name": profile.get("task_name"),
+        "target_table": target_table,
+        "stmt_kind": profile.get("stmt_kind"),
+        "input_table_count": len(source_tables),
+        "output_column_count": len(output_columns),
+        "main_operations": operations,
+    }
+    if source_tables or target_table:
+        table_text = f"{len(source_tables)}张输入表" if source_tables else "上游数据"
+        op_text = "、".join(operations) if operations else "字段整理"
+        summary["main_process"] = f"从{table_text}读取数据，经过{op_text}后写入 {target_table}"
+    return summary
+
+
+def _infer_grain(end_to_end: list[dict], steps: list[dict]) -> dict:
+    aggregate_steps = [step for step in steps if "aggregate" in step.get("operations", [])]
+    candidate_keys = [
+        item.get("column")
+        for item in end_to_end
+        if _looks_like_key_column(item.get("column", ""))
+    ]
+    keys = _unique(col for col in candidate_keys if col)[:8]
+    evidence = []
+    if aggregate_steps:
+        evidence.append("aggregate_steps")
+    if keys:
+        evidence.append("id_like_output_columns")
+    if any(item.get("column") == "dt" for item in end_to_end):
+        evidence.append("partition_column_dt")
+    return {
+        "type": "aggregate_level" if aggregate_steps else "record_level",
+        "keys": keys,
+        "confidence": "medium" if keys or aggregate_steps else "low",
+        "evidence": evidence,
+    }
+
+
+def _build_important_columns(end_to_end: list[dict]) -> list[dict]:
+    important: list[dict] = []
+    for item in end_to_end:
+        column = item.get("column")
+        if not column:
+            continue
+        transform = item.get("transform")
+        reasons = _column_importance_reasons(column, transform, item.get("physical_sources", []))
+        if not reasons:
+            continue
+        important.append({
+            "column": column,
+            "transform": transform,
+            "importance": "high" if transform not in ("DIRECT", "CONSTANT") else "medium",
+            "reasons": reasons,
+        })
+    return important[:PROFILE_MAX_IMPORTANT_COLUMNS]
+
+
+def _build_expression_catalog(end_to_end: list[dict], steps: list[dict]) -> list[dict]:
+    catalog: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for item in end_to_end:
+        expression = item.get("expression")
+        transform = item.get("transform")
+        if not expression or transform in ("DIRECT", "CONSTANT"):
+            continue
+        key = (transform or "", expression)
+        if key in seen:
+            continue
+        seen.add(key)
+        catalog.append({
+            "id": f"expr_{len(catalog) + 1}",
+            "type": transform,
+            "columns": [item.get("column")],
+            "summary": _expression_summary(transform, expression),
+            "expression_length": len(expression),
+        })
+
+    for step in steps:
+        logic = step.get("logic") or {}
+        for item in logic.get("case_when", []):
+            key = ("CASE_WHEN", item.get("column", ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            catalog.append({
+                "id": f"expr_{len(catalog) + 1}",
+                "type": "CASE_WHEN",
+                "columns": [item.get("column")],
+                "summary": item.get("summary"),
+                "branch_count": item.get("branch_count"),
+            })
+    return catalog[:PROFILE_MAX_EXPRESSION_CATALOG]
+
+
+def _build_filters_summary(steps: list[dict]) -> list[dict]:
+    filters: list[dict] = []
+    seen: set[str] = set()
+    for step in steps:
+        for expression in (step.get("logic") or {}).get("filters", []):
+            if not expression or expression in seen:
+                continue
+            seen.add(expression)
+            filters.append({
+                "scope": step.get("name"),
+                "expression": expression,
+                "type": _filter_type(expression),
+            })
+    return filters[:PROFILE_MAX_FILTERS_SUMMARY]
+
+
+def _column_importance_reasons(column: str, transform: str | None, sources: list[dict]) -> list[str]:
+    reasons: list[str] = []
+    if transform and transform not in ("DIRECT", "CONSTANT"):
+        reasons.append(f"transform:{transform}")
+    if _looks_like_key_column(column):
+        reasons.append("id_or_key_column")
+    if column == "dt" or column.endswith("_dt") or column.endswith("_date"):
+        reasons.append("date_or_partition_column")
+    if any(token in column.lower() for token in ("status", "state", "type", "flag", "level")):
+        reasons.append("business_classification_column")
+    if any(token in column.lower() for token in ("amount", "amt", "cnt", "count", "num", "score", "rate")):
+        reasons.append("metric_like_column")
+    if any(source.get("transform") not in ("DIRECT", "CONSTANT") for source in sources):
+        reasons.append("derived_from_physical_sources")
+    return _unique(reasons)
+
+
+def _looks_like_key_column(column: str) -> bool:
+    name = column.lower()
+    return name == "id" or name.endswith("_id") or name.endswith("id") or name.endswith("_key")
+
+
+def _expression_summary(transform: str | None, expression: str) -> str:
+    if transform == "CONDITIONAL" or "CASE" in expression.upper():
+        return "条件分支派生字段"
+    if transform == "AGGREGATE":
+        return "聚合计算字段"
+    if transform == "WINDOW":
+        return "窗口函数计算字段"
+    return "表达式计算字段"
+
+
+def _filter_type(expression: str) -> str:
+    text = expression.lower()
+    if "dt" in text and ("=" in text or "between" in text):
+        return "partition_filter"
+    if "is_deleted" in text or "deleted" in text:
+        return "soft_delete_filter"
+    return "business_filter"
+
+
+def _compact_list_field(profile: dict, key: str, max_items: int) -> None:
+    items = profile.get(key)
+    if not isinstance(items, list) or len(items) <= max_items:
+        return
+    profile[key] = items[:max_items]
+    profile[f"{key}_count"] = len(items)
+    profile[f"{key}_truncated"] = True
+
+
+def _unique(values: Any) -> list:
+    result = []
+    seen = set()
+    for value in values:
+        if value is None or value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
 
 
 def _compact_related_metadata(related_metadata: dict) -> None:

@@ -76,14 +76,17 @@ def _scope_step(
     scope_id: str,
     scope_data: ScopeData,
 ) -> dict[str, Any]:
+    operations = _operations(scope_data)
+    physical_tables = _physical_source_tables(result, scope_id)
     return {
         "scope_id": scope_id,
         "name": _display_name(scope_id, scope_data),
         "kind": scope_data.kind,
         "role": scope_data.role or _fallback_role(scope_data),
-        "operations": _operations(scope_data),
+        "operations": operations,
+        "business_summary": _business_summary(scope_data, operations, physical_tables),
         "direct_inputs": list(scope_data.depends_on),
-        "physical_source_tables": _physical_source_tables(result, scope_id),
+        "physical_source_tables": physical_tables,
         "output_columns": len(scope_data.columns),
         "logic": {
             "joins": [_join_summary(j) for j in scope_data.joins],
@@ -150,6 +153,45 @@ def _operations(scope_data: ScopeData) -> list[str]:
     if not operations:
         operations.append("pass_through")
     return operations
+
+
+def _business_summary(
+    scope_data: ScopeData,
+    operations: list[str],
+    physical_tables: list[str],
+) -> str:
+    parts: list[str] = []
+    if physical_tables:
+        shown = ", ".join(physical_tables[:3])
+        suffix = f" 等{len(physical_tables)}张物理表" if len(physical_tables) > 3 else ""
+        parts.append(f"读取 {shown}{suffix}")
+    elif scope_data.depends_on:
+        parts.append(f"读取 {', '.join(scope_data.depends_on[:3])}")
+
+    if "union" in operations:
+        branch_count = len(scope_data.branches or [])
+        if branch_count:
+            parts.append(f"合并 {branch_count} 个分支")
+        else:
+            parts.append("合并多路数据")
+    if "join" in operations:
+        parts.append(f"关联 {len(scope_data.joins)} 个上游")
+    if "filter" in operations:
+        parts.append("按过滤条件保留记录")
+    if "aggregate" in operations:
+        parts.append("聚合生成指标")
+    if "window" in operations:
+        parts.append("使用窗口函数排序/去重/取值")
+    if "case_when" in operations:
+        parts.append("通过 CASE WHEN 派生字段")
+    if "lateral_view" in operations:
+        parts.append("展开数组或复杂类型")
+    if "distinct" in operations:
+        parts.append("去重")
+
+    if not parts:
+        parts.append("传递并整理上游字段")
+    return "；".join(parts)
 
 
 def _filter_expressions(scope_data: ScopeData) -> list[str]:

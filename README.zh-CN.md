@@ -191,10 +191,13 @@ diagnostics、`scope_profile`，以及 ROOT 字段到物理表字段的端到端
 `profile.json` 是给 LLM/任务画像使用的轻量产物。它不包含完整的中间 `scopes`
 明细，只保留解释 SQL 加工逻辑所需的信息：
 
-- `scope_profile`：每个 scope 一步加工摘要，包含 role、operations、物理源表、
-  joins、filters、aggregations、window、CASE 摘要、关键重命名、DISTINCT 标记、
-  UNION 分支数和 lateral view 展开信息；解析器产生的纯透传 scope 会被过滤，
-  `profile_step_count` 只统计保留下来的画像步骤；
+- `scope_profile`：每个 scope 一步加工摘要，包含 role、operations、
+  business_summary、物理源表、joins、filters、aggregations、window、CASE 摘要、
+  关键重命名、DISTINCT 标记、UNION 分支数和 lateral view 展开信息；解析器产生的
+  纯透传 scope 会被过滤，`profile_step_count` 只统计保留下来的画像步骤；
+- `summary`、`grain`、`important_columns`、`filters_summary` 和
+  `expression_catalog`：给 LLM 使用的轻量阅读索引，用来概括任务、推断可能的数据粒度、
+  标出关键/派生/指标类输出字段、汇总重要过滤条件，并对重要表达式模式做去重摘要；
 - `related_metadata`：拆分为 `input_tables` 和 `output_tables`。输入表和输出表
   都优先使用 schema 中的 `type/comment`，输入表 schema 缺失时从 scope 引用字段补齐；遇到星号或
   未解析等不确定引用时，会保守保留该表全部已知字段；

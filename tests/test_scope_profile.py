@@ -116,10 +116,57 @@ def test_profile_dict_is_compact_for_llm_preanalysis():
         "stmt_kind",
         "source_tables",
         "related_metadata",
+        "summary",
+        "grain",
+        "important_columns",
+        "expression_catalog",
+        "filters_summary",
+        "read_order",
+        "compact_policy",
         "scope_profile",
         "end_to_end_lineage",
         "diagnostics",
     }
+    assert profile["summary"] == {
+        "task_name": "compact_profile",
+        "target_table": "mart.t",
+        "stmt_kind": "INSERT",
+        "input_table_count": 1,
+        "output_column_count": 2,
+        "main_operations": ["case_when"],
+        "main_process": "从1张输入表读取数据，经过case_when后写入 mart.t",
+    }
+    assert profile["grain"] == {
+        "type": "record_level",
+        "keys": ["id"],
+        "confidence": "medium",
+        "evidence": ["id_like_output_columns"],
+    }
+    assert profile["important_columns"] == [
+        {
+            "column": "id",
+            "transform": "DIRECT",
+            "importance": "medium",
+            "reasons": ["id_or_key_column"],
+        },
+        {
+            "column": "value_range",
+            "transform": "DIRECT",
+            "importance": "medium",
+            "reasons": ["derived_from_physical_sources"],
+        },
+    ]
+    assert profile["expression_catalog"] == [
+        {
+            "id": "expr_1",
+            "type": "CASE_WHEN",
+            "columns": ["value_range"],
+            "summary": "CASE expression with 3 branches",
+            "branch_count": 3,
+        }
+    ]
+    assert profile["filters_summary"] == []
+    assert profile["read_order"][:3] == ["summary", "grain", "scope_profile.steps"]
     assert "scopes" not in profile
     assert "scope_graph" not in profile
     assert "root_columns" not in profile
@@ -128,6 +175,7 @@ def test_profile_dict_is_compact_for_llm_preanalysis():
     value_range_lineage = next(item for item in profile["end_to_end_lineage"] if item["column"] == "value_range")
     assert value_range_lineage["expression"] == "`labeled`.`value_range`"
     case_step = next(s for s in profile["scope_profile"]["steps"] if s["scope_id"] == "cte:labeled")
+    assert case_step["business_summary"] == "读取 ods.scores；通过 CASE WHEN 派生字段"
     case_item = case_step["logic"]["case_when"][0]
     assert case_item == {
         "column": "value_range",
@@ -421,6 +469,7 @@ def test_profile_compaction_truncates_large_sections(monkeypatch):
     monkeypatch.setattr(scope_serializer, "PROFILE_MAX_EXPRESSION_CHARS", 20)
     monkeypatch.setattr(scope_serializer, "PROFILE_MAX_METADATA_COLUMNS_PER_TABLE", 2)
     monkeypatch.setattr(scope_serializer, "PROFILE_MAX_PHYSICAL_SOURCES_PER_COLUMN", 1)
+    monkeypatch.setattr(scope_serializer, "PROFILE_MAX_SOURCE_TABLES", 1)
     monkeypatch.setattr(scope_serializer, "PROFILE_MAX_WARNINGS", 1)
 
     schema = {
@@ -451,6 +500,10 @@ def test_profile_compaction_truncates_large_sections(monkeypatch):
     result.diagnostics.warnings.append(DiagnosticWarning(type="magic_number", scope="ROOT", msg="second"))
 
     profile = to_profile_dict(result)
+
+    assert profile["source_tables_count"] == 2
+    assert profile["source_tables_truncated"] is True
+    assert profile["source_tables"] == ["ods.a"]
 
     long_expr = next(item for item in profile["end_to_end_lineage"] if item["column"] == "long_expr")
     assert len(long_expr["expression"]) <= 20
