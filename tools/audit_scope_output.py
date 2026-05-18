@@ -62,6 +62,8 @@ RISKY_WARNINGS = {
     "unresolved_alias",
 }
 
+TERMINAL_SOURCE_SCOPES = {"CONSTANT", "SYSTEM"}
+
 
 @dataclass
 class AuditRecord:
@@ -242,6 +244,8 @@ def _record_issues(
                         details.append(
                             f"dangling: {sid}.{col_name} -> {src_scope}.{src_col} expr={expression}"
                         )
+                elif src_scope in TERMINAL_SOURCE_SCOPES:
+                    continue
                 elif src_scope not in scopes and src_scope not in nodes and src_scope != "UNKNOWN":
                     issues["dangling_scope_ref"] += 1
                     details.append(f"dangling scope: {sid}.{col_name} -> {src_scope}.{src_col}")

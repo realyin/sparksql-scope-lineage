@@ -242,8 +242,10 @@ def _infer_grain(end_to_end: list[dict], steps: list[dict]) -> dict:
     return {
         "type": "aggregate_level" if aggregate_steps else "record_level",
         "keys": keys,
+        "key_type": "candidate_output_keys",
         "confidence": "medium" if keys or aggregate_steps else "low",
         "evidence": evidence,
+        "note": "keys are heuristic candidate output identifiers, not a verified primary key",
     }
 
 

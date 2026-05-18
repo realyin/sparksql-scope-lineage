@@ -188,6 +188,43 @@ def test_schema_expanded_scope_missing_column_is_yellow_metadata_gap(tmp_path):
     assert result.issue_counts["dangling_column_ref"] == 0
 
 
+def test_audit_allows_constant_and_system_source_refs(tmp_path):
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    _write_stmt(
+        out_dir,
+        "constants",
+        {
+            "target_table": "dwd.constants",
+            "source_tables": [],
+            "scope_graph": {"nodes": ["ROOT"], "edges": []},
+            "scopes": {
+                "ROOT": {
+                    "columns": [
+                        {
+                            "name": "dt",
+                            "transform": "CONSTANT",
+                            "expression": "'20260519'",
+                            "sources": [{"scope": "CONSTANT", "column": "'20260519'"}],
+                        },
+                        {
+                            "name": "etl_time",
+                            "transform": "EXPRESSION",
+                            "expression": "CURRENT_TIMESTAMP()",
+                            "sources": [{"scope": "SYSTEM", "column": "CURRENT_TIMESTAMP()"}],
+                        },
+                    ]
+                }
+            },
+        },
+    )
+
+    result = audit_scope_output.audit_output(None, out_dir)
+
+    assert result.severity_counts["RED"] == 0
+    assert result.issue_counts["dangling_scope_ref"] == 0
+
+
 def test_main_writes_report_json_and_fails_on_red(tmp_path):
     out_dir = tmp_path / "out"
     out_dir.mkdir()

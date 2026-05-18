@@ -139,8 +139,10 @@ def test_profile_dict_is_compact_for_llm_preanalysis():
     assert profile["grain"] == {
         "type": "record_level",
         "keys": ["id"],
+        "key_type": "candidate_output_keys",
         "confidence": "medium",
         "evidence": ["id_like_output_columns"],
+        "note": "keys are heuristic candidate output identifiers, not a verified primary key",
     }
     assert profile["important_columns"] == [
         {
