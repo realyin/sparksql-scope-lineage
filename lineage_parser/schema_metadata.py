@@ -93,7 +93,7 @@ def load_schema(path: str | Path) -> SchemaMap:
 
     Supported CSV shape:
       - rows with ``table_name`` and ``column_name``
-      - optional ``type`` and ``comment`` columns
+      - optional ``type``/``column_type`` and ``comment``/``column_comment`` columns
 
     Supported JSON shapes:
       - ``{"db.table": ["c1", "c2"]}``
@@ -120,7 +120,7 @@ def load_schema_csv(path: str | Path) -> SchemaMap:
             column = row.get("column_name") or row.get("column") or row.get("name") or ""
             detail = {
                 "name": column,
-                "type": row.get("type") or row.get("data_type"),
+                "type": row.get("type") or row.get("data_type") or row.get("column_type"),
                 "comment": row.get("comment") or row.get("column_comment"),
             }
             _append_schema_column(schema, table, detail)
@@ -166,7 +166,7 @@ def _schema_from_json_value(data) -> SchemaMap:
             table = item.get("table_name") or item.get("table") or ""
             column = {
                 "name": item.get("column_name") or item.get("column") or item.get("name") or "",
-                "type": item.get("type") or item.get("data_type"),
+                "type": item.get("type") or item.get("data_type") or item.get("column_type"),
                 "comment": item.get("comment") or item.get("column_comment"),
             }
             _append_schema_column(schema, table, column)
@@ -229,7 +229,7 @@ def _normalize_column_detail(column: str | Mapping | None) -> dict:
         raw = {}
 
     name = raw.get("column_name") or raw.get("name") or raw.get("column") or ""
-    col_type = raw.get("type") or raw.get("data_type")
+    col_type = raw.get("type") or raw.get("data_type") or raw.get("column_type")
     comment = raw.get("comment") or raw.get("column_comment")
     return {
         "name": (name or "").strip().strip("`"),

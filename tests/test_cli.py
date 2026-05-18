@@ -1,6 +1,7 @@
 import json
 
 from lineage_parser.cli import main
+from lineage_parser.schema_metadata import column_details_for_table, load_schema
 
 
 def test_cli_parse_writes_outputs(tmp_path):
@@ -60,3 +61,21 @@ def test_cli_parse_writes_outputs(tmp_path):
     assert profile["related_metadata"] == data["related_metadata"]
     assert (out_dir / "demo" / "views" / "scope_overview.mmd").exists()
     assert (out_dir / "demo" / "report.html").exists()
+
+
+def test_schema_csv_accepts_column_type_and_column_comment(tmp_path):
+    schema_path = tmp_path / "schema_info.csv"
+    schema_path.write_text(
+        "table_name,column_name,column_type,column_comment\n"
+        "ods.users,id,bigint,用户ID\n"
+        "ods.users,country,string,国家\n",
+        encoding="utf-8",
+    )
+
+    schema = load_schema(schema_path)
+
+    assert schema["ods.users"] == ["id", "country"]
+    assert column_details_for_table(schema, "ods.users") == [
+        {"name": "id", "type": "bigint", "comment": "用户ID"},
+        {"name": "country", "type": "string", "comment": "国家"},
+    ]

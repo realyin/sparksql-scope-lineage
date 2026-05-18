@@ -282,10 +282,19 @@ ods.users,country
 ods.users,status
 ```
 
-Optional `type` and `comment` columns are preserved in `related_metadata`:
+Optional `type`/`column_type` and `comment`/`column_comment` columns are
+preserved in `related_metadata`:
 
 ```csv
 table_name,column_name,type,comment
+ods.users,id,bigint,User ID
+ods.users,status,string,Account status
+```
+
+This warehouse-style shape is also accepted:
+
+```csv
+table_name,column_name,column_type,column_comment
 ods.users,id,bigint,User ID
 ods.users,status,string,Account status
 ```

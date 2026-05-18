@@ -269,10 +269,19 @@ ods.users,country
 ods.users,status
 ```
 
-如果 CSV 中包含可选的 `type` 和 `comment`，会保留到 `related_metadata`：
+如果 CSV 中包含可选的 `type`/`column_type` 和 `comment`/`column_comment`，
+会保留到 `related_metadata`：
 
 ```csv
 table_name,column_name,type,comment
+ods.users,id,bigint,用户ID
+ods.users,status,string,账号状态
+```
+
+也支持数仓常见的字段命名：
+
+```csv
+table_name,column_name,column_type,column_comment
 ods.users,id,bigint,用户ID
 ods.users,status,string,账号状态
 ```
