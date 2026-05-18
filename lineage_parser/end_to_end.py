@@ -38,6 +38,7 @@ def build_end_to_end_lineage(result: ScopeLineageResult) -> list[dict[str, Any]]
         item = {
             "column": column.name,
             "transform": column.transform,
+            "expression": column.expression,
             "trace_complete": not trace["trace_incomplete_reasons"],
             "physical_sources": trace["physical_sources"],
         }

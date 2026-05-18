@@ -189,7 +189,6 @@ end-to-end physical lineage for ROOT columns.
 intermediate `scopes` payload and keeps the pieces that explain the SQL at a
 business-logic level:
 
-- `scope_graph`: the scope-level DAG,
 - `scope_profile`: one processing step per scope, with role, operations,
   physical source tables, joins, filters, aggregations, windows, CASE summaries,
   key renames, DISTINCT flags, UNION branch counts, and lateral-view expansions.
@@ -199,10 +198,10 @@ business-logic level:
   schema `type/comment` when available. Input tables fall back to columns
   inferred from scope references when schema is missing, and conservatively keep
   all known columns for wildcard or unresolved references,
-- `root_columns`: the target-facing columns,
 - `end_to_end_lineage`: ROOT columns traced back to physical table columns,
-  including `trace_complete`; `trace_incomplete_reasons` is emitted only when
-  tracing stops at patterns such as unexpanded stars,
+  including each target-facing expression and `trace_complete`;
+  `trace_incomplete_reasons` is emitted only when tracing stops at patterns
+  such as unexpanded stars,
 - `diagnostics`: warnings and parser confidence signals.
 
 `report.html` is a self-contained offline visual report with a scope DAG, ROOT

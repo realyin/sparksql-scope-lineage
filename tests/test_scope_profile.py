@@ -114,13 +114,17 @@ def test_profile_dict_is_compact_for_llm_preanalysis():
         "stmt_kind",
         "source_tables",
         "related_metadata",
-        "scope_graph",
         "scope_profile",
-        "root_columns",
         "end_to_end_lineage",
         "diagnostics",
     }
     assert "scopes" not in profile
+    assert "scope_graph" not in profile
+    assert "root_columns" not in profile
+    id_lineage = next(item for item in profile["end_to_end_lineage"] if item["column"] == "id")
+    assert id_lineage["expression"] == "`labeled`.`id`"
+    value_range_lineage = next(item for item in profile["end_to_end_lineage"] if item["column"] == "value_range")
+    assert value_range_lineage["expression"] == "`labeled`.`value_range`"
     case_step = next(s for s in profile["scope_profile"]["steps"] if s["scope_id"] == "cte:labeled")
     case_item = case_step["logic"]["case_when"][0]
     assert case_item == {

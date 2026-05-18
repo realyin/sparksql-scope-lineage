@@ -131,16 +131,13 @@ def to_json(result: ScopeLineageResult, indent: int = 2) -> str:
 def to_profile_dict(result: ScopeLineageResult) -> dict:
     """Return compact LLM/profile-oriented output without full intermediate scopes."""
     full = to_dict(result)
-    root = full.get("scopes", {}).get("ROOT", {})
     return {
         "task_name": full["task_id"],
         "target_table": full["target_table"],
         "stmt_kind": full["stmt_kind"],
         "source_tables": full.get("source_tables", []),
         "related_metadata": full.get("related_metadata", {}),
-        "scope_graph": full.get("scope_graph", {}),
         "scope_profile": full.get("scope_profile", {}),
-        "root_columns": root.get("columns", []),
         "end_to_end_lineage": full.get("end_to_end_lineage", []),
         "diagnostics": full.get("diagnostics", {}),
     }
