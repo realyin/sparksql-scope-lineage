@@ -87,6 +87,6 @@ If an input table is missing from schema metadata, the output still includes the
 columns inferred from SQL references with `type/comment` set to null and
 `metadata_complete=false`.
 
-Output table metadata is derived from the ROOT output columns. Because the
-parser usually does not have target table comments or physical types, output
-entries currently use `type/comment=null` and `metadata_complete=false`.
+Output table metadata also uses schema details when the target table is present
+in schema metadata. If target schema is missing, it falls back to ROOT output
+columns with `type/comment=null` and `metadata_complete=false`.

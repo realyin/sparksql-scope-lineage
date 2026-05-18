@@ -241,6 +241,11 @@ def test_related_metadata_keeps_only_columns_used_by_any_scope_when_safe():
             {"name": "risklevel", "type": "string", "comment": "风险等级"},
             {"name": "phone_number", "type": "string", "comment": "手机号"},
             {"name": "unused_col", "type": "string", "comment": "未使用"},
+        ],
+        "mart.t": [
+            {"name": "call_id", "type": "string", "comment": "拨打编号"},
+            {"name": "risky_phone", "type": "string", "comment": "风险手机号"},
+            {"name": "load_time", "type": "timestamp", "comment": "加载时间"},
         ]
     }
 
@@ -261,12 +266,38 @@ def test_related_metadata_keeps_only_columns_used_by_any_scope_when_safe():
         "output_tables": {
             "mart.t": {
                 "column_details": [
-                    {"name": "call_id", "type": None, "comment": None},
-                    {"name": "risky_phone", "type": None, "comment": None},
+                    {"name": "call_id", "type": "string", "comment": "拨打编号"},
+                    {"name": "risky_phone", "type": "string", "comment": "风险手机号"},
                 ],
-                "metadata_complete": False,
+                "metadata_complete": True,
             }
         },
+    }
+
+
+def test_related_metadata_output_table_falls_back_to_root_without_schema():
+    sql = """
+    INSERT INTO mart.t
+    SELECT a.id, a.score AS final_score
+    FROM ods.src a
+    """
+    schema = {
+        "ods.src": [
+            {"name": "id", "type": "string", "comment": "ID"},
+            {"name": "score", "type": "decimal(10,2)", "comment": "分数"},
+        ]
+    }
+
+    profile = to_profile_dict(parse_scope_lineage(sql, "metadata_output_fallback", schema=schema))
+
+    assert profile["related_metadata"]["output_tables"] == {
+        "mart.t": {
+            "column_details": [
+                {"name": "id", "type": None, "comment": None},
+                {"name": "final_score", "type": None, "comment": None},
+            ],
+            "metadata_complete": False,
+        }
     }
 
 

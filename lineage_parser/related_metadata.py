@@ -30,7 +30,7 @@ def build_related_metadata(
 
     return {
         "input_tables": _input_table_metadata(result, schema, usage),
-        "output_tables": _output_table_metadata(result),
+        "output_tables": _output_table_metadata(result, schema),
     }
 
 
@@ -61,18 +61,25 @@ def _input_table_metadata(
     return tables
 
 
-def _output_table_metadata(result: ScopeLineageResult) -> dict:
+def _output_table_metadata(
+    result: ScopeLineageResult,
+    schema: Mapping[str, Iterable[str]] | None,
+) -> dict:
     root = result.scopes.get("ROOT")
     if root is None or not result.target_table:
         return {}
+    output_names = [column.name for column in root.columns if column.name]
+    schema_details = column_details_for_table(schema, result.target_table) if schema else []
+    if schema_details:
+        details = [item for item in schema_details if item["name"] in output_names]
+        complete = True
+    else:
+        details = [_unknown_column_detail(name) for name in output_names]
+        complete = False
     return {
         result.target_table: {
-            "column_details": [
-                _unknown_column_detail(column.name)
-                for column in root.columns
-                if column.name
-            ],
-            "metadata_complete": False,
+            "column_details": details,
+            "metadata_complete": complete,
         }
     }
 
