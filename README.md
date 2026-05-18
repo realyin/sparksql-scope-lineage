@@ -195,8 +195,8 @@ business-logic level:
   key renames, DISTINCT flags, UNION branch counts, and lateral-view expansions.
   Parser-only pass-through scopes are omitted, and `profile_step_count` counts
   only the retained profile steps,
-- `related_metadata`: `input_tables` and `output_tables` metadata. Input table
-  entries keep schema `type/comment` when available, fall back to columns
+- `related_metadata`: `input_tables` and `output_tables` metadata. Entries keep
+  schema `type/comment` when available. Input tables fall back to columns
   inferred from scope references when schema is missing, and conservatively keep
   all known columns for wildcard or unresolved references,
 - `root_columns`: the target-facing columns,
