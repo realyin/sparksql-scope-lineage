@@ -27,8 +27,8 @@ def build_scope_profile(result: ScopeLineageResult) -> dict[str, Any]:
 def _is_parser_only_pass_through_step(step: dict[str, Any]) -> bool:
     if step["scope_id"] == "ROOT":
         return False
-    if step["role"] != "pass_through":
-        return False
+    if step["kind"] == "union_branch":
+        return True
     return set(step["operations"]) <= {"pass_through", "rename"}
 
 

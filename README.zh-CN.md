@@ -203,6 +203,11 @@ diagnostics、`scope_profile`，以及 ROOT 字段到物理表字段的端到端
   `trace_incomplete_reasons`；
 - `diagnostics`：warning 和解析置信度信号。
 
+为了让大模型更容易一次读完，`profile.json` 会做保守瘦身：超长表达式会截断并保留
+长度标记；每张表的字段元数据、每个输出字段的物理来源会限制数量并保留 count/truncated
+标记；diagnostics warnings 会输出类型统计和样例。完整细节仍保留在 `lineage.json`
+和 `diagnostics.json`。
+
 `report.html` 是自包含的离线可视化报告，包含 scope DAG、ROOT 字段表、单字段
 聚焦血缘和 diagnostics。它不依赖 CDN、字体、脚本或本地旁路文件，可以直接在
 受限内网环境打开。

@@ -1,7 +1,9 @@
 import json
 
 from lineage_parser import parse_scope_lineage
+from lineage_parser import scope_serializer
 from lineage_parser.scope_serializer import to_dict, to_profile_dict, write_output
+from lineage_parser.scope_types import DiagnosticWarning
 
 
 def _step_by_scope(data, scope_id):
@@ -172,7 +174,9 @@ def test_write_output_writes_full_lineage_and_compact_profile(tmp_path):
 
     assert (tmp_path / "lineage.json").exists()
     assert (tmp_path / "profile.json").exists()
-    profile = json.loads((tmp_path / "profile.json").read_text(encoding="utf-8"))
+    profile_text = (tmp_path / "profile.json").read_text(encoding="utf-8")
+    assert "\n" not in profile_text
+    profile = json.loads(profile_text)
     lineage = json.loads((tmp_path / "lineage.json").read_text(encoding="utf-8"))
     assert "scopes" not in profile
     assert "scopes" in lineage
@@ -217,6 +221,7 @@ def test_scope_profile_includes_distinct_union_branches_and_lateral_views():
 
     union = next(s for s in profile["scope_profile"]["steps"] if s["kind"] == "union")
     assert union["logic"]["union_branches"] == 2
+    assert not any(s["kind"] == "union_branch" for s in profile["scope_profile"]["steps"])
 
     lateral = _step_by_scope(profile, "udtf:t")
     assert lateral["logic"]["lateral_views"] == [
@@ -410,3 +415,59 @@ def test_related_metadata_includes_input_tables_missing_from_schema():
             "metadata_complete": False,
         },
     }
+
+
+def test_profile_compaction_truncates_large_sections(monkeypatch):
+    monkeypatch.setattr(scope_serializer, "PROFILE_MAX_EXPRESSION_CHARS", 20)
+    monkeypatch.setattr(scope_serializer, "PROFILE_MAX_METADATA_COLUMNS_PER_TABLE", 2)
+    monkeypatch.setattr(scope_serializer, "PROFILE_MAX_PHYSICAL_SOURCES_PER_COLUMN", 1)
+    monkeypatch.setattr(scope_serializer, "PROFILE_MAX_WARNINGS", 1)
+
+    schema = {
+        "ods.a": [
+            {"name": "id", "type": "string", "comment": "ID"},
+            {"name": "c1", "type": "string", "comment": "一"},
+            {"name": "c2", "type": "string", "comment": "二"},
+            {"name": "c3", "type": "string", "comment": "三"},
+        ],
+        "ods.b": [
+            {"name": "id", "type": "string", "comment": "ID"},
+            {"name": "c1", "type": "string", "comment": "一"},
+        ],
+    }
+    sql = """
+    INSERT INTO mart.t
+    SELECT
+      CONCAT(a.c1, a.c2, a.c3, b.c1, 'this is a deliberately long literal') AS long_expr,
+      CASE WHEN a.c1 = 'x' THEN a.c2 ELSE b.c1 END AS mixed_col
+    FROM ods.a a
+    LEFT JOIN ods.b b
+      ON a.id = b.id
+    WHERE a.c1 = 'x'
+    """
+
+    result = parse_scope_lineage(sql, "profile_compaction", schema=schema)
+    result.diagnostics.warnings.append(DiagnosticWarning(type="magic_number", scope="ROOT", msg="first"))
+    result.diagnostics.warnings.append(DiagnosticWarning(type="magic_number", scope="ROOT", msg="second"))
+
+    profile = to_profile_dict(result)
+
+    long_expr = next(item for item in profile["end_to_end_lineage"] if item["column"] == "long_expr")
+    assert len(long_expr["expression"]) <= 20
+    assert long_expr["expression_truncated"] is True
+    assert long_expr["expression_length"] > len(long_expr["expression"])
+    assert long_expr["physical_source_count"] > len(long_expr["physical_sources"])
+    assert long_expr["physical_sources_truncated"] is True
+
+    table_meta = profile["related_metadata"]["input_tables"]["ods.a"]
+    assert len(table_meta["column_details"]) == 2
+    assert table_meta["column_count"] == 4
+    assert table_meta["shown_column_count"] == 2
+    assert table_meta["columns_truncated"] is True
+
+    diagnostics = profile["diagnostics"]
+    assert diagnostics["warning_count"] == 2
+    assert diagnostics["warnings_truncated"] is True
+    assert diagnostics["warning_types"] == {"magic_number": 2}
+    assert len(diagnostics["warnings_sample"]) == 1
+    assert "warnings" not in diagnostics

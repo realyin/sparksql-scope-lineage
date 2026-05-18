@@ -34,6 +34,12 @@ from .scope_profile import build_scope_profile
 _SCHEMA_PATH = Path(__file__).parent / "schemas" / "lineage.schema.json"
 _schema_cache: dict | None = None
 
+PROFILE_MAX_EXPRESSION_CHARS = 200
+PROFILE_MAX_METADATA_COLUMNS_PER_TABLE = 10
+PROFILE_MAX_PHYSICAL_SOURCES_PER_COLUMN = 5
+PROFILE_MAX_LOGIC_ITEMS_PER_TYPE = 10
+PROFILE_MAX_WARNINGS = 20
+
 
 def _load_schema() -> dict:
     global _schema_cache
@@ -131,7 +137,7 @@ def to_json(result: ScopeLineageResult, indent: int = 2) -> str:
 def to_profile_dict(result: ScopeLineageResult) -> dict:
     """Return compact LLM/profile-oriented output without full intermediate scopes."""
     full = to_dict(result)
-    return {
+    profile = {
         "task_name": full["task_id"],
         "target_table": full["target_table"],
         "stmt_kind": full["stmt_kind"],
@@ -141,11 +147,116 @@ def to_profile_dict(result: ScopeLineageResult) -> dict:
         "end_to_end_lineage": full.get("end_to_end_lineage", []),
         "diagnostics": full.get("diagnostics", {}),
     }
+    return _compact_profile(profile)
 
 
 def to_profile_json(result: ScopeLineageResult, indent: int = 2) -> str:
     """Serialize compact LLM/profile-oriented output to JSON."""
     return json.dumps(to_profile_dict(result), ensure_ascii=False, indent=indent, default=str)
+
+
+def _compact_profile(profile: dict) -> dict:
+    profile = _copy.deepcopy(profile)
+    _compact_related_metadata(profile.get("related_metadata", {}))
+    _compact_end_to_end_lineage(profile.get("end_to_end_lineage", []))
+    _compact_scope_profile(profile.get("scope_profile", {}))
+    profile["diagnostics"] = _compact_profile_diagnostics(profile.get("diagnostics", {}))
+    return profile
+
+
+def _compact_related_metadata(related_metadata: dict) -> None:
+    for section in ("input_tables", "output_tables"):
+        tables = related_metadata.get(section) or {}
+        for metadata in tables.values():
+            columns = metadata.get("column_details") or []
+            total = len(columns)
+            if total > PROFILE_MAX_METADATA_COLUMNS_PER_TABLE:
+                metadata["column_details"] = columns[:PROFILE_MAX_METADATA_COLUMNS_PER_TABLE]
+                metadata["column_count"] = total
+                metadata["shown_column_count"] = len(metadata["column_details"])
+                metadata["columns_truncated"] = True
+
+
+def _compact_end_to_end_lineage(items: list) -> None:
+    for item in items:
+        expression = item.get("expression")
+        if isinstance(expression, str):
+            compact, truncated = _truncate_text(expression, PROFILE_MAX_EXPRESSION_CHARS)
+            if truncated:
+                item["expression"] = compact
+                item["expression_length"] = len(expression)
+                item["expression_truncated"] = True
+
+        sources = item.get("physical_sources") or []
+        total = len(sources)
+        if total > PROFILE_MAX_PHYSICAL_SOURCES_PER_COLUMN:
+            item["physical_sources"] = sources[:PROFILE_MAX_PHYSICAL_SOURCES_PER_COLUMN]
+            item["physical_source_count"] = total
+            item["shown_physical_source_count"] = len(item["physical_sources"])
+            item["physical_sources_truncated"] = True
+
+
+def _compact_scope_profile(scope_profile: dict) -> None:
+    for step in scope_profile.get("steps", []):
+        logic = step.get("logic") or {}
+        for key, value in list(logic.items()):
+            if isinstance(value, list):
+                total = len(value)
+                logic[key] = [_compact_logic_value(item) for item in value[:PROFILE_MAX_LOGIC_ITEMS_PER_TYPE]]
+                if total > PROFILE_MAX_LOGIC_ITEMS_PER_TYPE:
+                    logic[f"{key}_count"] = total
+                    logic[f"{key}_truncated"] = True
+            else:
+                logic[key] = _compact_logic_value(value)
+
+
+def _compact_logic_value(value: Any) -> Any:
+    if isinstance(value, str):
+        compact, truncated = _truncate_text(value, PROFILE_MAX_EXPRESSION_CHARS)
+        if truncated:
+            return compact
+        return value
+    if isinstance(value, list):
+        return [_compact_logic_value(item) for item in value]
+    if isinstance(value, dict):
+        compacted = {}
+        for key, item in value.items():
+            compacted[key] = _compact_logic_value(item)
+            if isinstance(item, str):
+                compact, truncated = _truncate_text(item, PROFILE_MAX_EXPRESSION_CHARS)
+                if truncated:
+                    compacted[key] = compact
+                    compacted[f"{key}_length"] = len(item)
+                    compacted[f"{key}_truncated"] = True
+        return compacted
+    return value
+
+
+def _compact_profile_diagnostics(diagnostics: dict) -> dict:
+    compacted = {k: v for k, v in diagnostics.items() if k != "warnings"}
+    warnings = diagnostics.get("warnings") or []
+    if not warnings:
+        return compacted
+
+    compacted["warning_count"] = len(warnings)
+    warning_types: dict[str, int] = {}
+    for warning in warnings:
+        warning_type = warning.get("type", "unknown")
+        warning_types[warning_type] = warning_types.get(warning_type, 0) + 1
+    compacted["warning_types"] = warning_types
+    compacted["warnings_sample"] = warnings[:PROFILE_MAX_WARNINGS]
+    if len(warnings) > PROFILE_MAX_WARNINGS:
+        compacted["warnings_truncated"] = True
+        compacted["shown_warning_count"] = PROFILE_MAX_WARNINGS
+    return compacted
+
+
+def _truncate_text(text: str, max_chars: int) -> tuple[str, bool]:
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text, False
+    if max_chars <= 3:
+        return text[:max_chars], True
+    return text[: max_chars - 3] + "...", True
 
 
 def write_output(result: ScopeLineageResult, output_dir: str | Path) -> Path:
@@ -176,7 +287,7 @@ def write_output(result: ScopeLineageResult, output_dir: str | Path) -> Path:
     # Write compact LLM/profile-oriented output without full intermediate scopes
     profile_path = output_dir / "profile.json"
     with open(profile_path, "w", encoding="utf-8") as f:
-        json.dump(to_profile_dict(result), f, ensure_ascii=False, indent=2, default=str)
+        json.dump(to_profile_dict(result), f, ensure_ascii=False, separators=(",", ":"), default=str)
 
     # Write diagnostics separately
     diag_path = output_dir / "diagnostics.json"

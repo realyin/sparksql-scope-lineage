@@ -204,6 +204,13 @@ business-logic level:
   such as unexpanded stars,
 - `diagnostics`: warnings and parser confidence signals.
 
+To keep the artifact LLM-readable, `profile.json` applies conservative
+compaction only to this compact output: long expressions are truncated with
+length markers, per-table metadata columns and per-column physical sources are
+bounded with count/truncation flags, and diagnostics warnings are summarized
+with type counts plus a sample. Full detail remains available in `lineage.json`
+and `diagnostics.json`.
+
 `report.html` is a self-contained offline visual report with a scope DAG, ROOT
 column table, focused field lineage, and diagnostics. It does not load CDN
 assets, fonts, scripts, or local sidecar files, so it can be opened directly in
