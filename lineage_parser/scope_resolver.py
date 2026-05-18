@@ -799,11 +799,14 @@ def _resolve_unqualified(
         return SourceRef(scope=udtf_candidates[0], column=col_name)
 
     # Step 2: Search Table sources
+    first_missing_schema_table: tuple[str, exp.Table] | None = None
     for alias, source in _selected_sources(sg_scope).items():
         if isinstance(source, exp.Table):
             fq = _qualified_table(source)
             if schema:
                 norm = _normalize_table_name(fq)
+                if norm not in schema and first_missing_schema_table is None:
+                    first_missing_schema_table = (alias, source)
                 if col_name in schema.get(norm, []):
                     return SourceRef(scope=fq, column=col_name)
             else:
@@ -814,6 +817,19 @@ def _resolve_unqualified(
                     msg=f"Unqualified column '{col_name}' resolved to first Table source without schema",
                 ))
                 return SourceRef(scope=fq, column=col_name)
+
+    if schema and first_missing_schema_table is not None:
+        _alias, source = first_missing_schema_table
+        fq = _qualified_table(source)
+        result.diagnostics.warnings.append(DiagnosticWarning(
+            type="unresolved_unqualified_no_schema",
+            scope=getattr(sg_scope, _SCOPE_ID_ATTR, "UNKNOWN"),
+            msg=(
+                f"Unqualified column '{col_name}' resolved to first Table source "
+                f"because schema metadata does not contain that table"
+            ),
+        ))
+        return SourceRef(scope=fq, column=col_name)
 
     if len(star_scope_candidates) == 1:
         _alias, source = star_scope_candidates[0]
@@ -1087,6 +1103,9 @@ def _expand_star_into_columns(
             short = _normalize_table_name(fq)
             col_names = schema.get(short, [])
             if col_names:
+                col_names = _with_referenced_columns_missing_from_schema(
+                    sg_scope, table_alias, col_names
+                )
                 for cn in col_names:
                     columns.append(ScopeColumn(
                         name=cn,
@@ -1119,6 +1138,9 @@ def _expand_star_into_columns(
                     short = _normalize_table_name(fq)
                     col_names = schema.get(short, [])
                     if col_names:
+                        col_names = _with_referenced_columns_missing_from_schema(
+                            sg_scope, alias, col_names
+                        )
                         for cn in col_names:
                             columns.append(ScopeColumn(
                                 name=cn,
@@ -1134,6 +1156,64 @@ def _expand_star_into_columns(
             return columns
 
     return []
+
+
+def _with_referenced_columns_missing_from_schema(
+    sg_scope: Scope,
+    table_alias: str | None,
+    col_names: list[str],
+) -> list[str]:
+    """Keep explicit filter/join/order refs when schema misses partition-like columns.
+
+    Some metastore exports omit partition columns such as ``dt`` even though
+    Spark ``SELECT *`` exposes them. If a star-expanded scope later references
+    such a column, treating it as absent creates an internal dangling ref. The
+    SQL already names the column, so retaining it as a pass-through is safer
+    than dropping it from the expanded star list.
+    """
+    extra: list[str] = []
+    source_count = len(_selected_sources(sg_scope))
+    for col_ref in _scope_local_column_refs(sg_scope):
+        if col_ref.table:
+            if table_alias and col_ref.table != table_alias:
+                continue
+            if not table_alias:
+                continue
+        elif table_alias and source_count > 1:
+            continue
+        name = col_ref.name
+        if name and name not in col_names and name not in extra:
+            extra.append(name)
+    return list(col_names) + extra
+
+
+def _scope_local_column_refs(sg_scope: Scope) -> list[exp.Column]:
+    expr = sg_scope.expression
+    if not isinstance(expr, exp.Select):
+        return []
+
+    roots = []
+    for key in ("where", "having", "qualify"):
+        node = expr.args.get(key)
+        if node is not None:
+            roots.append(node)
+    group = expr.args.get("group")
+    if group is not None:
+        roots.extend(group.expressions if hasattr(group, "expressions") else [group])
+    order = expr.args.get("order")
+    if order is not None:
+        roots.extend(order.expressions if hasattr(order, "expressions") else [order])
+    for join in expr.args.get("joins") or []:
+        on_expr = join.args.get("on")
+        if on_expr is not None:
+            roots.append(on_expr)
+
+    refs: list[exp.Column] = []
+    for root in roots:
+        for col_ref in root.find_all(exp.Column):
+            if not _inside_nested_query(col_ref, root):
+                refs.append(col_ref)
+    return refs
 
 
 def _resolve_union_scope(

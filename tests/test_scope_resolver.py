@@ -178,6 +178,36 @@ class TestValuesAndStarExpansion:
         assert [c.name for c in root.columns] == ["id", "name"]
         assert root.columns[1].sources == [SourceRef(scope="ods.src", column="name")]
 
+    def test_star_expansion_keeps_referenced_partition_column_missing_from_schema(self):
+        result = parse_scope_lineage(
+            "INSERT INTO dwd.t "
+            "SELECT t.id, t.dt "
+            "FROM (SELECT * FROM ods.src WHERE dt = '20260519') t",
+            "test_star_partition_ref",
+            schema={"ods.src": ["id", "name"]},
+        )
+
+        subq = result.scopes["subq:t"]
+        assert [c.name for c in subq.columns] == ["id", "name", "dt"]
+        assert subq.columns[-1].sources == [SourceRef(scope="ods.src", column="dt")]
+        root_dt = next(c for c in result.scopes["ROOT"].columns if c.name == "dt")
+        assert root_dt.sources == [SourceRef(scope="subq:t", column="dt")]
+
+    def test_partial_schema_missing_table_uses_no_schema_unqualified_fallback(self):
+        result = parse_scope_lineage(
+            "INSERT INTO dwd.t "
+            "SELECT id FROM ods.missing a JOIN ods.other b ON a.k = b.k",
+            "test_partial_schema_unqualified_fallback",
+            schema={"ods.unrelated": ["id"]},
+        )
+
+        root = result.scopes["ROOT"]
+        assert root.columns[0].sources == [SourceRef(scope="ods.missing", column="id")]
+        assert [
+            w for w in result.diagnostics.warnings
+            if w.type == "unresolved_unqualified_no_schema"
+        ]
+
     def test_union_star_branches_use_only_selected_source(self):
         result = parse_scope_lineage(
             "WITH a AS (SELECT x.id FROM ods.a x), "
