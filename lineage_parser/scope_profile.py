@@ -82,7 +82,7 @@ def _scope_step(
         "scope_id": scope_id,
         "name": _display_name(scope_id, scope_data),
         "kind": scope_data.kind,
-        "role": scope_data.role or _fallback_role(scope_data),
+        "role": _profile_role(scope_data),
         "operations": operations,
         "business_summary": _business_summary(scope_data, operations, physical_tables),
         "direct_inputs": list(scope_data.depends_on),
@@ -100,6 +100,12 @@ def _scope_step(
             "lateral_views": _json_safe(scope_data.lateral_views),
         },
     }
+
+
+def _profile_role(scope_data: ScopeData) -> str:
+    if scope_data.distinct and scope_data.role == "pass_through":
+        return "dedup"
+    return scope_data.role or _fallback_role(scope_data)
 
 
 def _display_name(scope_id: str, scope_data: ScopeData) -> str:
@@ -123,6 +129,8 @@ def _fallback_role(scope_data: ScopeData) -> str:
         return "join"
     if scope_data.filters:
         return "filter"
+    if scope_data.distinct:
+        return "dedup"
     if scope_data.columns and all(c.transform in ("DIRECT", "CONSTANT") for c in scope_data.columns):
         return "pass_through"
     return "transform"

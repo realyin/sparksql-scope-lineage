@@ -118,6 +118,8 @@ def test_profile_dict_is_compact_for_llm_preanalysis():
         "source_tables",
         "related_metadata",
         "summary",
+        "business_profile",
+        "business_rule_candidates",
         "grain",
         "important_columns",
         "expression_catalog",
@@ -169,7 +171,17 @@ def test_profile_dict_is_compact_for_llm_preanalysis():
         }
     ]
     assert profile["filters_summary"] == []
-    assert profile["read_order"][:3] == ["summary", "grain", "scope_profile.steps"]
+    assert profile["business_rule_candidates"] == []
+    assert profile["business_profile"]["objective"]["summary"] == (
+        "生成 mart.t；主要读取 ods.scores；语义线索包括 评分/分数"
+    )
+    assert profile["read_order"][:5] == [
+        "summary",
+        "business_profile",
+        "grain",
+        "scope_profile.steps",
+        "business_rule_candidates",
+    ]
     assert "scopes" not in profile
     assert "scope_graph" not in profile
     assert "root_columns" not in profile
@@ -392,6 +404,96 @@ def test_related_metadata_includes_join_fields_without_keeping_whole_join_table(
         {"name": "queue_id", "type": "string", "comment": "队列ID"},
         {"name": "queue_name", "type": "string", "comment": "队列名称"},
     ]
+
+
+def test_business_profile_extracts_rule_candidates_and_semantic_hints():
+    sql = """
+    INSERT OVERWRITE TABLE mart.in_collect
+    SELECT a.internal_customer_id, a.acct_nbr
+    FROM ods.loan_all a
+    LEFT JOIN (SELECT DISTINCT contra_no FROM dim.excess) b
+      ON a.contr_nbr = b.contra_no
+    WHERE a.dt = '20260426'
+      AND (a.overdue_date IS NOT NULL OR a.in_clct_dpd BETWEEN -7 AND 0 OR b.contra_no IS NOT NULL)
+    """
+    schema = SchemaMap(
+        {
+            "ods.loan_all": ["internal_customer_id", "acct_nbr", "dt", "overdue_date", "in_clct_dpd", "contr_nbr", "unused"],
+            "dim.excess": ["contra_no"],
+            "mart.in_collect": ["internal_customer_id", "acct_nbr"],
+        },
+        column_details={
+            "ods.loan_all": [
+                {"name": "internal_customer_id", "type": "string", "comment": "客户ID"},
+                {"name": "acct_nbr", "type": "string", "comment": "账户号"},
+                {"name": "dt", "type": "string", "comment": "日期分区"},
+                {"name": "overdue_date", "type": "string", "comment": "逾期日期"},
+                {"name": "in_clct_dpd", "type": "int", "comment": "入催DPD"},
+                {"name": "contr_nbr", "type": "string", "comment": "合同号"},
+                {"name": "unused", "type": "string", "comment": "未使用"},
+            ],
+            "dim.excess": [
+                {"name": "contra_no", "type": "string", "comment": "超额合同号"},
+            ],
+            "mart.in_collect": [
+                {"name": "internal_customer_id", "type": "string", "comment": "客户ID"},
+                {"name": "acct_nbr", "type": "string", "comment": "账户号"},
+            ],
+        },
+        table_details={
+            "ods.loan_all": {"table_name_cn": "贷款全量表"},
+            "dim.excess": {"table_name_cn": "超额合同维表"},
+            "mart.in_collect": {"table_name_cn": "入催名单表"},
+        },
+    )
+
+    profile = to_profile_dict(parse_scope_lineage(sql, "business_profile", schema=schema))
+
+    assert "入催名单表" in profile["business_profile"]["objective"]["summary"]
+    assert "入催" in profile["business_profile"]["objective"]["semantic_hints"]
+    assert profile["business_profile"]["objective"]["primary_decision"] == "是否保留/纳入目标结果"
+    dedup_step = _step_by_scope(profile, "subq:b")
+    assert dedup_step["role"] == "dedup"
+
+    where_rule = next(item for item in profile["business_rule_candidates"] if item["source"] == "WHERE")
+    assert where_rule["condition_group_type"] == "MIXED_AND_OR"
+    assert where_rule["fields"] == ["dt", "in_clct_dpd", "contra_no", "overdue_date"]
+    assert {item["comment"] for item in where_rule["field_details"]} >= {"日期分区", "入催DPD", "超额合同号", "逾期日期"}
+
+    join_rule = next(item for item in profile["business_rule_candidates"] if item["source"] == "JOIN_ON")
+    assert join_rule["fields"] == ["contr_nbr", "contra_no"]
+
+
+def test_metadata_compaction_prioritizes_rule_and_lineage_columns(monkeypatch):
+    monkeypatch.setattr(scope_serializer, "PROFILE_MAX_METADATA_COLUMNS_PER_TABLE", 3)
+    sql = """
+    INSERT INTO mart.t
+    SELECT a.id, a.metric
+    FROM ods.wide a
+    WHERE a.dt = '20260515' AND a.important_flag = 'Y'
+    """
+    schema = {
+        "ods.wide": [
+            {"name": "unused_1", "type": "string", "comment": "未使用1"},
+            {"name": "unused_2", "type": "string", "comment": "未使用2"},
+            {"name": "id", "type": "string", "comment": "主键"},
+            {"name": "metric", "type": "decimal", "comment": "指标"},
+            {"name": "dt", "type": "string", "comment": "分区"},
+            {"name": "important_flag", "type": "string", "comment": "重要标记"},
+        ],
+        "mart.t": [
+            {"name": "id", "type": "string", "comment": "主键"},
+            {"name": "metric", "type": "decimal", "comment": "指标"},
+        ],
+    }
+
+    profile = to_profile_dict(parse_scope_lineage(sql, "metadata_priority", schema=schema))
+
+    names = [
+        item["name"]
+        for item in profile["related_metadata"]["input_tables"]["ods.wide"]["column_details"]
+    ]
+    assert names == ["dt", "important_flag", "id"]
 
 
 def test_related_metadata_keeps_all_columns_for_uncertain_star_reference():

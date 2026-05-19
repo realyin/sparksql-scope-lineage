@@ -17,13 +17,21 @@
 建议 LLM 按 `profile.json.read_order` 读取。当前推荐顺序是：
 
 1. `summary`
-2. `grain`
-3. `scope_profile.steps`
-4. `important_columns`
-5. `end_to_end_lineage`
-6. `related_metadata`
+2. `business_profile`
+3. `grain`
+4. `scope_profile.steps`
+5. `business_rule_candidates`
+6. `important_columns`
+7. `end_to_end_lineage`
+8. `related_metadata`
 
 这个顺序的意图是先建立全局理解，再看加工链路，最后核对字段和血缘可信度。
+
+`business_profile` 和 `business_rule_candidates` 是业务解释层。前者给出任务目标、
+每个 scope 的业务段落骨架和处理动作；后者把 WHERE/HAVING/JOIN 条件拆成规则候选，
+附上涉及字段、字段中文注释、操作符线索和原始条件摘要。LLM 应优先用这两部分归纳
+“这个任务的目标是什么、由几部分构成、每部分判断条件是什么、然后怎么处理”，再用
+`scope_profile.steps` 和 `end_to_end_lineage` 校验事实。
 
 ## 1. 从 summary 判断任务主题
 
@@ -345,11 +353,13 @@ LLM 最终可以按 L1-L5 输出任务画像。
 
 阅读顺序：
 1. summary
-2. grain
-3. scope_profile.steps
-4. important_columns
-5. end_to_end_lineage
-6. related_metadata
+2. business_profile
+3. grain
+4. scope_profile.steps
+5. business_rule_candidates
+6. important_columns
+7. end_to_end_lineage
+8. related_metadata
 
 输出结构：
 L1：任务概览

@@ -199,6 +199,12 @@ business-logic level:
   `expression_catalog`: lightweight LLM reading aids that summarize the task,
   infer the likely row grain, highlight key/derived/metric-like output columns,
   gather important filters, and de-duplicate notable expression patterns,
+- `business_profile` and `business_rule_candidates`: business-facing evidence
+  derived from scopes. `business_profile` gives objective clues and per-scope
+  sections, while `business_rule_candidates` groups WHERE/HAVING/JOIN
+  conditions with referenced fields, column comments, operator hints, and raw
+  summaries so an LLM can describe rules such as eligibility, exclusion, or
+  classification logic without reading one giant SQL predicate,
 - `related_metadata`: `input_tables` and `output_tables` metadata. Entries keep
   schema `type/comment` when available. Input tables fall back to columns
   inferred from scope references when schema is missing, and conservatively keep
@@ -215,8 +221,10 @@ To keep the artifact LLM-readable, `profile.json` applies conservative
 compaction only to this compact output: long expressions are truncated with
 length markers, per-table metadata columns and per-column physical sources are
 bounded with count/truncation flags, and diagnostics warnings are summarized
-with type counts plus a sample. Full detail remains available in `lineage.json`
-and `diagnostics.json`.
+with type counts plus a sample. When table column metadata must be truncated,
+columns referenced by business rules, joins, and important lineage fields are
+kept first. Full detail remains available in `lineage.json` and
+`diagnostics.json`.
 
 `report.html` is a self-contained offline visual report with a scope DAG, ROOT
 column table, focused field lineage, and diagnostics. It does not load CDN

@@ -32,12 +32,14 @@
 
 读取顺序：
 1. summary
-2. grain
-3. scope_profile.steps
-4. important_columns
-5. end_to_end_lineage
-6. related_metadata
-7. diagnostics
+2. business_profile
+3. grain
+4. scope_profile.steps
+5. business_rule_candidates
+6. important_columns
+7. end_to_end_lineage
+8. related_metadata
+9. diagnostics
 
 输出结构必须包含：
 
@@ -45,7 +47,8 @@ L1：任务概览
 - 任务名、目标表、SQL 类型
 - 输入表数量、输出字段数量
 - 主要加工操作
-- 用 1-2 句话概括任务在做什么
+- 优先结合 business_profile.objective，用 1-2 句话概括任务在做什么；如果有
+  primary_decision 或 semantic_hints，要说明它是在做什么业务判断/筛选/分类
 
 L2：输入输出
 - 主要输入表，最多列 10 个，超过则说明还有更多
@@ -56,11 +59,14 @@ L2：输入输出
 L3：加工步骤
 - 按 scope_profile.steps 顺序总结主要加工链路
 - 优先保留 join、filter、aggregate、window、case_when、union、lateral_view
+- 对每个关键步骤，结合 business_profile.sections 和 business_rule_candidates
+  说明“条件是什么、处理动作是什么、输出到哪里”
 - 不要列出无业务意义的解析细节
 
 L4：核心字段/指标
 - 根据 important_columns 和 end_to_end_lineage 分组：
   标识字段、时间/分区字段、分类字段、指标字段、重要派生字段
+- business_rule_candidates 中出现的字段通常是业务判断字段，也要纳入核心字段说明
 - 如果 related_metadata 中有字段 comment，必须用字段中文注释解释字段语义
 - 对 CASE WHEN、聚合、窗口函数派生字段说明其来源和用途边界
 

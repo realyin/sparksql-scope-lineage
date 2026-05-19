@@ -199,6 +199,11 @@ diagnostics、`scope_profile`，以及 ROOT 字段到物理表字段的端到端
 - `summary`、`grain`、`important_columns`、`filters_summary` 和
   `expression_catalog`：给 LLM 使用的轻量阅读索引，用来概括任务、推断可能的数据粒度、
   标出关键/派生/指标类输出字段、汇总重要过滤条件，并对重要表达式模式做去重摘要；
+- `business_profile` 和 `business_rule_candidates`：面向业务解释的 scope 证据层。
+  `business_profile` 给出目标线索和每个 scope 的业务段落骨架；
+  `business_rule_candidates` 会把 WHERE/HAVING/JOIN 条件整理成规则候选，
+  包含涉及字段、字段注释、操作符线索和条件摘要，方便 LLM 从业务视角描述“准入/排除/
+  分类/判断”等规则，而不是直接阅读一大段 SQL 谓词；
 - `related_metadata`：拆分为 `input_tables` 和 `output_tables`。输入表和输出表
   都优先使用 schema 中的 `type/comment`，输入表 schema 缺失时从 scope 引用字段补齐；遇到星号或
   未解析等不确定引用时，会保守保留该表全部已知字段；如果传入表级元数据，
@@ -210,8 +215,9 @@ diagnostics、`scope_profile`，以及 ROOT 字段到物理表字段的端到端
 
 为了让大模型更容易一次读完，`profile.json` 会做保守瘦身：超长表达式会截断并保留
 长度标记；每张表的字段元数据、每个输出字段的物理来源会限制数量并保留 count/truncated
-标记；diagnostics warnings 会输出类型统计和样例。完整细节仍保留在 `lineage.json`
-和 `diagnostics.json`。
+标记；字段元数据被截断时，会优先保留业务规则、join 和重要血缘字段涉及的字段注释；
+diagnostics warnings 会输出类型统计和样例。完整细节仍保留在 `lineage.json` 和
+`diagnostics.json`。
 
 `report.html` 是自包含的离线可视化报告，包含 scope DAG、ROOT 字段表、单字段
 聚焦血缘和 diagnostics。它不依赖 CDN、字体、脚本或本地旁路文件，可以直接在
