@@ -2,16 +2,29 @@
 
 中文 | [English](README.md)
 
-面向 Spark SQL 和 Hive 风格数仓 SQL 的字段级血缘解析工具。
+面向 Spark SQL 和 Hive 风格数仓 SQL 的 **SQL 业务语义抽取与任务画像工具**。
 
-`sparksql-scope-lineage` 会静态解析 SQL，保留 CTE、子查询、UNION 分支等中间查询块，支持在提供表结构信息时展开 `SELECT *`，并提供审计工具检查输出结果的结构完整性。
+`sparksql-scope-lineage` 的目标不只是回答“字段从哪里来”，而是把复杂 SQL
+解析成 agent 和人都能读懂的业务信息：这个任务生成什么业务对象、读取哪些上游表、
+由哪些 scope/阶段构成、每个阶段的筛选/关联/去重/聚合/窗口/CASE 规则是什么、
+核心字段和指标如何加工、哪些字段血缘可信、哪些地方受 schema 或静态解析边界影响。
+
+字段级血缘仍然是底座：项目会静态解析 SQL，保留 CTE、子查询、UNION 分支等中间
+查询块，支持在提供表结构信息时展开 `SELECT *`，并提供审计工具检查输出结果的结构完整性。
+在此基础上，它会生成面向 LLM/agent/数据开发/数据治理人员的 `profile.json`，
+用于进一步生成任务画像、业务规则说明和可交接的 Markdown 文档。
 
 它适合回答这些问题：
 
+- 这个 SQL 任务的业务目标是什么，最终产出什么业务对象？
+- 整个 SQL 由几个主要 scope/处理阶段组成，每个阶段在做什么？
+- 每个阶段的关键条件是什么，字段在规则里承担什么判断作用？
+- 核心输入表、输出表、字段和指标的中文语义是什么？
 - 目标表的某个字段来自哪些物理表字段？
 - 这个字段经过了哪些 CTE、子查询或 UNION 分支？
 - `SELECT *` 是否已经完整展开，还是缺少表结构信息？
 - 血缘图里有没有 UNKNOWN 来源、断链或不完整引用？
+- 生成给 agent 或人阅读的任务分级结构文档时，哪些结论可信，哪些需要回看完整血缘？
 
 ## 为什么需要它
 
@@ -31,12 +44,18 @@ SELECT col FROM table
 - `MERGE INTO`；
 - 从物理表或中间结果里 `SELECT *`。
 
-如果一开始就把所有字段直接拍平成“目标字段 -> 物理字段”，复杂 SQL 会很难排查。这个项目的做法是先保留每个查询块，也就是 scope，再从 scope 图里追踪到最终的物理字段。
+如果一开始就把所有字段直接拍平成“目标字段 -> 物理字段”，复杂 SQL 会很难排查，
+也很难向人或 agent 解释“这个任务到底在做什么”。这个项目的做法是先保留每个查询块，
+也就是 scope，再从 scope 图里追踪到最终的物理字段，并在此基础上抽取面向业务理解的
+阶段、规则、核心字段和风险边界。
 
-这样做有两个好处：
+这样做有几个好处：
 
 - 中间转换不会丢，调试时能看到字段是在哪一层变了；
 - 出现 UNKNOWN 或断链时，可以定位到具体的 CTE、子查询或 UNION 分支。
+- LLM 不需要直接阅读几千行 SQL，就可以基于 `profile.json` 理解任务目标、加工链路、
+  核心规则和字段含义；
+- 数据开发、数据治理、交接和代码评审可以围绕同一份可追溯的任务画像讨论业务口径。
 
 ## 快速开始
 
@@ -263,6 +282,7 @@ SQL
 - [Scope 模型](docs/scope-model.md)
 - [原理说明](docs/how-it-works.zh-CN.md)
 - [Schema 元数据](docs/schema-metadata.md)
+- [profile.json 生成和使用说明](docs/profile-json-generation-and-usage.zh-CN.md)
 - [LLM Profile 使用指南](docs/llm-profile-guide.zh-CN.md)
 - [LLM Profile Prompt 模板](docs/llm-profile-prompt.zh-CN.md)
 - [审计方法](docs/audit-methodology.md)
