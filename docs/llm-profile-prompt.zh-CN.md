@@ -38,6 +38,10 @@
 ```text
 下面是一个 SQL 任务的 profile.json。请根据 profile 生成任务分级结构文档。
 
+生成模式：详细还原模式。
+目标不是写摘要，而是尽可能还原 SQL 的业务逻辑。允许输出较长，但必须结构清晰。
+不要为了简短而省略关键 scope、关键过滤条件、关键 CASE/窗口/聚合/UNION 分支。
+
 读取顺序：
 1. summary
 2. business_profile
@@ -71,9 +75,11 @@ L1：任务概览
 - 优先结合 business_profile.objective，用 1-2 句话概括任务在做什么；如果有
   primary_decision 或 semantic_hints，要说明它是在做什么业务判断/筛选/分类
 - 写出“业务目标推断依据”，至少引用目标表语义、输入表语义、规则字段或核心输出字段
+- 如果 profile 信息不足以确定业务目标，要明确写“根据表名/字段/规则推断”，不要伪装成确定事实
 
 L2：输入输出
-- 主要输入表，最多列 10 个，超过则说明还有更多
+- 主要输入表；详细还原模式下不要只列前几个表。若输入表超过 10 个，
+  先列“核心输入表”，再列“辅助/维表/中间表”，并说明还有多少未展开
 - 如果有 table_metadata，必须写出表中文名/表说明，并解释这些表在任务中的作用
 - 输出表
 - related_metadata 的覆盖情况
@@ -86,12 +92,23 @@ L3：加工步骤
   说明“条件是什么、处理动作是什么、输出到哪里”
 - 对 UNION 任务说明各分支在合并什么来源；对窗口函数说明是在排序、去重、取首/取末；
   对聚合说明指标或汇总口径；对 CASE WHEN 说明分类/状态派生含义
-- 不要列出无业务意义的解析细节
+- 不要列出无业务意义的解析细节，但不要省略有业务作用的 filter、dedup、join、aggregate、
+  window、case_when、union、lateral_view
+- 每个关键步骤建议按以下格式输出：
+  - 阶段名称：来自 step.name / role
+  - 输入：物理源表或上游 scope
+  - 条件：来自 business_rule_candidates / logic.filters / joins.on
+  - 处理：filter、join、dedup、aggregate、window、case_when、union 等
+  - 输出/作用：本阶段产出了什么中间结果或为下游补充什么字段
 
 L3.5：业务规则/判断逻辑
 - 必须单独列出从 business_rule_candidates 和 filters_summary 归纳出的规则组
 - 每个规则组包含：规则名称、涉及字段、字段中文语义、规则作用
 - 不要只写“按过滤条件筛选”，要解释筛选条件在业务上可能表示什么
+- 对复杂 OR/AND 条件，要尽量拆成多个业务规则组，例如：
+  准入条件、排除条件、时间窗口、状态判断、金额阈值、名单命中、去重取最新、渠道合并
+- 如果 fields_truncated 或 expression_omitted=true，要说明该规则在 profile 中已瘦身，
+  只能还原主要字段，完整条件应查看 lineage.json
 
 L4：核心字段/指标
 - 根据 important_columns 和 end_to_end_lineage 分组：
@@ -100,6 +117,12 @@ L4：核心字段/指标
 - 如果 related_metadata 中有字段 comment，必须用字段中文注释解释字段语义
 - 对 CASE WHEN、聚合、窗口函数派生字段说明其来源和用途边界
 - 对每类字段说明“为什么核心”，不能只罗列字段名
+- 详细还原模式下，至少覆盖：
+  - 候选粒度字段 grain.keys
+  - important_columns 中的字段
+  - business_rule_candidates 中的判断字段
+  - output lineage 中 transform 不是 DIRECT/CONSTANT 的派生字段
+  - expression_catalog 中出现的 CASE/聚合/窗口/表达式字段
 
 L5：血缘可信度和风险边界
 - 统计 trace_complete=true/false 的输出字段数量
@@ -110,6 +133,7 @@ L5：血缘可信度和风险边界
   duplicate_table_in_union、star_not_expanded 等
 - 如果 compact_policy 显示 large_profile_compaction、expression_omitted、
   sections_truncated、fields_truncated 等，要说明 profile 已瘦身，完整细节看 lineage.json
+- 对 trace_complete=true 的字段，不能再声称“绝对正确”，只能写“从当前解析结果看可完整追溯”
 
 额外要求：
 - 不要把 grain.keys 称为主键，只能称为候选输出标识字段。
@@ -117,6 +141,7 @@ L5：血缘可信度和风险边界
   但若存在 schema 或 star warning，需要说明仍有中间 scope/schema 边界。
 - 输出必须是 Markdown。
 - 不要输出 JSON。
+- 详细还原模式下，优先完整性而不是简短性；除非用户要求摘要，否则不要压缩成几句话。
 
 profile.json:
 ```json
