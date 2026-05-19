@@ -33,6 +33,16 @@
 “这个任务的目标是什么、由几部分构成、每部分判断条件是什么、然后怎么处理”，再用
 `scope_profile.steps` 和 `end_to_end_lineage` 校验事实。
 
+详细还原模式下，LLM 输出必须保留三类定位关系：
+
+- 阶段和 scope 的关系：每个加工阶段都要写出 `scope_profile.steps[].name`；
+- 规则和条件的关系：每条规则都要写出条件表达式或可读条件摘要；
+- 字段和规则的关系：每个关键字段都要解释它在条件、关联、聚合、窗口或派生中
+  承担什么判断作用。
+
+如果只输出“涉及字段：a、b、c”，但没有说明条件是什么、字段如何参与判断，
+这类结果不能视为合格的详细还原。
+
 注意：`business_profile.objective.summary` 仍然是程序生成的线索，不是人工确认的最终业务
 结论。LLM 不应只复述它，而应结合：
 
@@ -152,11 +162,35 @@ LLM 可以用它生成一级概览，例如：
 LLM 应按 steps 的顺序还原加工链路，例如：
 
 ```text
-1. 读取通话明细表，按分区和有效标记过滤。
-2. 对通话记录按 call_id 聚合，生成通话次数和最近通话时间。
-3. 关联工单、评价、坐席等信息，补充上下文字段。
-4. 使用 CASE WHEN 派生状态字段。
-5. 最终写入目标宽表。
+1. scope=cte:base_call：读取通话明细表，按 dt='20260515' 和 is_deleted='false'
+   过滤有效分区数据。
+2. scope=cte:call_agg：对通话记录按 call_id 聚合，生成通话次数和最近通话时间。
+3. scope=ROOT：关联工单、评价、坐席等信息，补充上下文字段，并写入目标宽表。
+```
+
+详细还原模式下，每个关键步骤建议使用固定结构：
+
+```text
+阶段名称：构造待入催贷款基础范围
+scope：cte:loan_info_public_a_tmp
+scope 类型：cte
+技术角色：filter
+业务动作：从贷款全量表中筛选可能需要催收关注的贷款记录
+输入：clct_file_fasloan_model（贷款全量数据）
+关键条件：
+- dpd between -7 and 0：用逾期天数字段识别提前 7 天到当天的预警窗口。
+- forced_pay_off = 'Y'：用强制还款标记识别特殊纳入范围。
+关键字段关系：
+- dpd / 逾期天数：参与提前预警和逾期窗口判断。
+- forced_pay_off / 强制还款标记：参与特殊纳入规则。
+输出/作用：产出待入催贷款明细，供后续客户清单和贷款明细输出使用。
+```
+
+如果 profile 里没有完整条件，只能根据字段和 raw_summary 推断，应写明：
+
+```text
+profile 中没有保留完整条件表达式；以下仅根据 business_rule_candidates.fields
+和字段注释推断规则作用，完整条件需查看 lineage.json。
 ```
 
 如果 `role` 是 `aggregate`，优先解释分组和指标。  
@@ -326,8 +360,22 @@ LLM 最终可以按 L1-L5 输出任务画像。
 模板：
 
 ```text
-主要输入表包括：A、B、C。
-输出表为：T。
+输入表：
+- 英文表名：clct_file_fasloan_model
+  中文表名：贷款全量数据
+  表语义：作为贷款账户、账单、逾期和还款状态的事实来源。
+  核心字段：
+  - acct_nbr / 账户号：用于识别贷款账户。
+  - dpd / 逾期天数：用于入催窗口判断。
+
+输出表：
+- 英文表名：clct_cf_pre_in_coll_cust
+  中文表名：待入催客户清单
+  输出对象：满足入催条件的客户和账户组合。
+  核心字段：
+  - internal_customer_id / 内部客户号：输出客户标识。
+  - acct_nbr / 账户号：输出账户标识。
+
 输入/输出字段元数据来自 related_metadata；若 metadata_complete=false，
 表示该表字段类型或注释可能不完整。
 ```
@@ -340,9 +388,15 @@ LLM 最终可以按 L1-L5 输出任务画像。
 
 ```text
 加工链路：
-1. {step.name}：{step.business_summary}
-2. {step.name}：{step.business_summary}
-3. {step.name}：{step.business_summary}
+1. 阶段名称：...
+   scope：{step.name}
+   scope 类型：{step.kind}
+   技术角色：{step.role}
+   业务动作：...
+   输入：...
+   关键条件：...
+   关键字段关系：...
+   输出/作用：...
 ```
 
 需要时补充 joins、filters、aggregations、window_functions、case_when。
@@ -364,6 +418,32 @@ LLM 最终可以按 L1-L5 输出任务画像。
 
 如果字段来自 `case_when`，说明其分支数量和大致用途。  
 如果字段来自聚合，说明聚合函数和来源字段。
+
+### L3.5：业务规则/判断逻辑
+
+基于 `business_rule_candidates`、`filters_summary` 和 `scope_profile.steps[].logic`
+输出业务规则。规则必须绑定 scope，并解释条件和字段关系。
+
+模板：
+
+```text
+规则名称：提前入催预警
+所在 scope：cte:loan_info_public_a_tmp
+条件：dpd between -7 and 0
+涉及字段：
+- dpd / 逾期天数：在该条件中用于判断贷款是否进入提前 7 天预警窗口。
+规则作用：满足该条件的贷款会进入待入催基础范围。
+处理结果：后续输出到待入催客户清单和贷款明细。
+```
+
+不要写成：
+
+```text
+规则：入催筛选
+涉及字段：dpd、forced_pay_off、grace_date
+```
+
+这种写法缺少条件和字段作用，不能支撑业务核对。
 
 ### L5：血缘可信度和风险边界
 
