@@ -2,18 +2,38 @@
 
 [中文](README.zh-CN.md) | English
 
-Scope-aware column-level lineage for Spark SQL and Hive-style warehouse SQL.
+Scope-aware SQL business semantics and task profiling for Spark SQL and
+Hive-style warehouse SQL.
 
-`sparksql-scope-lineage` parses SQL statically, keeps intermediate query scopes
+`sparksql-scope-lineage` is not only about answering "where did this column
+come from?" Its broader goal is to turn complex SQL into business information
+that agents and humans can understand: what business object the task produces,
+which upstream tables it reads, which scopes/stages make up the processing
+chain, what each stage filters, joins, deduplicates, aggregates, windows, or
+derives with CASE logic, which fields and metrics are central, and which parts
+of the result are bounded by schema or static-analysis limits.
+
+Column-level lineage remains the foundation. The project parses SQL statically,
+keeps CTEs, subqueries, UNION branches, and other intermediate query blocks
 visible, expands `SELECT *` with optional schema metadata, and audits generated
-lineage output for structural confidence.
+output for structural confidence. On top of that, it emits `profile.json`, a
+compact LLM/agent-facing artifact for generating task profiles, business-rule
+explanations, and handoff-ready Markdown documentation.
 
 It is useful when you need to answer:
 
+- What is this SQL task trying to produce from a business point of view?
+- Which scopes or processing stages make up the SQL, and what does each stage do?
+- What are the key conditions in each stage, and how do fields participate in
+  those rules?
+- What are the semantic names and descriptions of the key input tables, output
+  tables, fields, and metrics?
 - Which physical columns feed each target column?
 - Which CTE, subquery, or UNION branch transformed the column?
 - Did `SELECT *` expand completely, or is schema metadata missing?
 - Are there UNKNOWN sources or broken internal references in the lineage graph?
+- When generating agent- or human-readable task documentation, which conclusions
+  are backed by complete lineage and which require checking full artifacts?
 
 ## Why Another Lineage Parser?
 
@@ -29,9 +49,17 @@ Real warehouse SQL often contains:
 - `MERGE INTO`,
 - and `SELECT *` from physical tables.
 
-Flattening all column references too early makes these queries hard to debug.
-This project keeps every query block as an explicit **scope** and then traces
-lineage through those scopes.
+Flattening all column references too early makes these queries hard to debug and
+even harder to explain as business logic. This project keeps every query block
+as an explicit **scope**, traces lineage through those scopes, and then derives
+business-facing stages, rules, important fields, and risk boundaries from the
+same evidence.
+
+This gives two layers of output:
+
+- machine-readable lineage for precise field tracing and structural auditing;
+- LLM- and human-readable profiles that explain task intent, processing stages,
+  rule logic, field semantics, and confidence boundaries.
 
 ## Quick Start
 
