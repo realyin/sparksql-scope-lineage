@@ -31,9 +31,82 @@
     时间窗口、去重取最新、渠道合并、指标聚合等。
 12. 如果 profile 中存在 expression_catalog、filters_summary、diagnostics.warning_types、
     compact_policy.*_truncated 或 *_omitted，也必须在合适章节体现其含义或边界。
+13. scope_profile.steps[].role 是技术加工角色，不是业务结论。输出时必须翻译成业务动作：
+    - filter：按条件筛选/保留/排除记录
+    - join：关联补充信息/命中名单/维表映射
+    - dedup：去重名单构造/按窗口取最新或唯一记录/避免关联放大
+    - aggregate：按粒度汇总指标/计算次数金额等
+    - window：排序取首/取末/取最新/序号去重/跨行比较
+    - case_when：按条件派生分类、状态、标签或标志位
+    - union：合并多个来源/渠道/策略分支
+    - lateral_view：展开数组、明细项或复杂类型
+    不要在最终文档中只写“角色：dedup/filter/join”，要写它在业务链路里的作用。
 ```
 
-## User Prompt 模板
+## 输出模式
+
+固定支持两种输出模式：
+
+1. 摘要模式  
+   用于检索、预览、知识库卡片。目标是快速说明任务主题、输入输出、核心规则和主要风险。
+   输出应短，通常 800-1500 字。
+
+2. 详细还原模式  
+   用于数据治理、交接、代码评审、业务规则核对。目标是尽可能还原 SQL 的业务逻辑。
+   输出可以较长，必须展开关键 scope、过滤条件、CASE/窗口/聚合/UNION 分支、核心字段和风险边界。
+
+## User Prompt 模板：摘要模式
+
+```text
+下面是一个 SQL 任务的 profile.json。请根据 profile 生成“摘要模式”的任务画像。
+
+生成模式：摘要模式。
+用途：检索、预览、知识库卡片。
+要求：不要展开所有 scope，只保留最关键的业务目标、输入输出、核心规则、核心字段和风险。
+
+读取顺序：
+1. summary
+2. business_profile
+3. grain
+4. business_rule_candidates
+5. important_columns
+6. related_metadata
+7. end_to_end_lineage
+8. diagnostics
+
+输出结构：
+
+# SQL 任务摘要：{task_name}
+
+## 1. 任务定位
+- 任务生成什么表
+- 根据目标表、输入表、字段和规则推断它解决什么业务问题
+- 标明这是 profile 推断还是 profile 明确事实
+
+## 2. 输入输出
+- 核心输入表及中文名/作用
+- 输出表及输出内容
+
+## 3. 核心加工逻辑
+- 用 3-6 条概括最关键的 filter/join/dedup/aggregate/window/case/union 逻辑
+- role 必须翻译成业务动作，不要直接输出 role 名称
+
+## 4. 核心字段/规则
+- 列出核心标识字段、判断字段、指标字段
+- 使用字段中文注释解释语义
+
+## 5. 可信度和风险
+- trace_complete 统计
+- diagnostics 主要 warning
+- 截断/省略/schema 边界
+
+profile.json:
+```json
+{{PROFILE_JSON}}
+```
+```
+
+## User Prompt 模板：详细还原模式
 
 ```text
 下面是一个 SQL 任务的 profile.json。请根据 profile 生成任务分级结构文档。
@@ -65,6 +138,9 @@
 - end_to_end_lineage：说明字段来源、表达式和 trace_complete 可信度。
 - related_metadata：用表中文名和字段中文注释解释语义。
 - diagnostics 和 compact_policy：说明解析风险、硬编码提示、截断/省略边界。
+- role 翻译：scope_profile.steps[].role 只表示技术加工角色。生成文档时必须转成业务动作，
+  例如 dedup 要写成“构造去重名单/取最新记录/避免关联放大”，join 要写成“关联补充/名单命中判断”，
+  aggregate 要写成“按某粒度汇总指标”，不要只输出英文 role。
 
 输出结构必须包含：
 
@@ -100,6 +176,7 @@ L3：加工步骤
   - 条件：来自 business_rule_candidates / logic.filters / joins.on
   - 处理：filter、join、dedup、aggregate、window、case_when、union 等
   - 输出/作用：本阶段产出了什么中间结果或为下游补充什么字段
+  - 业务动作翻译：把 role 翻译成自然语言业务动作，例如“构造超额放款合同唯一名单”
 
 L3.5：业务规则/判断逻辑
 - 必须单独列出从 business_rule_candidates 和 filters_summary 归纳出的规则组
@@ -160,6 +237,7 @@ profile.json:
 - 是否使用 business_profile.objective、business_profile.sections 和 business_rule_candidates
   归纳业务目标、组成部分和判断规则；
 - 是否没有把 business_profile.objective.summary 原样当最终业务结论；
+- 是否把 role 翻译成业务动作，而不是只输出 dedup/filter/join 等技术标签；
 - 是否使用 expression_catalog / filters_summary 补充派生字段和过滤规则；
 - 是否统计了 `trace_complete=true/false`；
 - 如果存在 `trace_complete=false`，是否列出字段和原因；
@@ -212,3 +290,37 @@ python tools/validate_llm_profile_doc.py \
 ```
 
 验证器只做结构和事实边界检查，不判断文字是否优美。
+
+## 其它 Agent 能力要求
+
+要稳定生成同等质量的任务画像，Agent 至少需要具备以下能力：
+
+1. 上下文窗口  
+   - 摘要模式：建议可读入 25k token 以上上下文，适合单个 80KB 以内 profile。
+   - 详细还原模式：建议 64k token 以上更稳；如果 profile 接近 80KB 且要求长文输出，
+     128k token 以上更合适。
+   - 如果上下文不足，应先读取 `summary/business_profile/business_rule_candidates/related_metadata`
+     生成摘要，再按需读取 `end_to_end_lineage/expression_catalog/diagnostics` 补充细节。
+
+2. 结构化 JSON 阅读能力  
+   Agent 必须能按 read_order 读取 JSON，不应随机挑字段。尤其要能关联：
+   `business_profile.sections`、`business_rule_candidates`、`scope_profile.steps`、
+   `related_metadata`、`important_columns`、`end_to_end_lineage`。
+
+3. SQL/数仓语义能力  
+   Agent 需要理解 filter、join、dedup、aggregate、window、case_when、union、lateral_view
+   在数仓 SQL 中的业务含义，并能把技术动作翻译成“名单构造、状态判断、时间窗口、指标汇总、
+   分支合并、取最新记录”等业务语言。
+
+4. 元数据利用能力  
+   Agent 必须优先使用表中文名、表描述、字段注释，不能只看英文表名/字段名。
+   如果中文元数据缺失，要明确说明语义来自表名或字段 token 推断。
+
+5. 可信度边界意识  
+   Agent 必须区分事实、推断和风险边界。不能把候选 key 写成主键，不能把 magic_number
+   写成血缘错误，不能忽略 trace_complete=false、metadata 截断、expression_omitted 等边界。
+
+6. 输出控制能力  
+   Agent 要能根据模式控制详略：
+   - 摘要模式：少量章节、快速定位、适合知识库卡片；
+   - 详细还原模式：完整阶段、规则组、字段解释、风险边界，适合交接和审查。
