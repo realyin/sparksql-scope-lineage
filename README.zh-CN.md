@@ -255,6 +255,7 @@ SQL
 - [Scope 模型](docs/scope-model.md)
 - [原理说明](docs/how-it-works.zh-CN.md)
 - [Schema 元数据](docs/schema-metadata.md)
+- [LLM Profile 使用指南](docs/llm-profile-guide.zh-CN.md)
 - [审计方法](docs/audit-methodology.md)
 - [限制说明](docs/limitations.md)
 
