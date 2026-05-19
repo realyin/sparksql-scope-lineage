@@ -99,3 +99,34 @@ def test_validate_profile_doc_rejects_primary_key_claim_and_missing_incomplete_f
     assert "grain_called_primary_key" in codes
     assert "missing_incomplete_column" in codes
     assert "schema_boundary_not_disclosed" in codes
+
+
+def test_validate_profile_doc_warns_when_semantic_metadata_is_not_used():
+    profile = _profile()
+    profile["important_columns"] = [{"column": "id", "reasons": ["id_or_key_column"]}]
+    profile["related_metadata"]["input_tables"]["ods.src"]["column_details"][0]["comment"] = "用户ID"
+    profile["related_metadata"]["input_tables"]["ods.src"]["table_metadata"] = {
+        "table_name_cn": "用户源表",
+        "table_desc": "用户基础信息来源表",
+    }
+    doc = """
+# SQL 任务画像：demo_task
+## L1：任务概览
+任务 demo_task 写入 mart.demo。
+## L2：输入输出
+输入表 ods.src。
+## L3：加工步骤
+步骤。
+## L4：核心字段/指标
+候选输出标识字段包括 id，不是已验证主键。
+## L5：血缘可信度和风险边界
+id 可完整追溯；a.* trace_complete=false，原因是 star_not_expanded，追溯不完整。
+存在 schema/SELECT * 覆盖边界。
+"""
+
+    result = validate_llm_profile_doc.validate_profile_doc(profile, doc)
+    codes = {finding["code"] for finding in result["findings"]}
+
+    assert result["ok"] is True
+    assert "table_semantics_not_used" in codes
+    assert "column_semantics_not_used" in codes

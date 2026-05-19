@@ -118,6 +118,7 @@ python tools/run_scope_corpus.py \
   --input-dir examples/tasks \
   --out /tmp/scope-output \
   --schema examples/table_cols.csv \
+  --table-metadata examples/table_info.csv \
   --md \
   --html
 ```
@@ -201,7 +202,9 @@ business-logic level:
 - `related_metadata`: `input_tables` and `output_tables` metadata. Entries keep
   schema `type/comment` when available. Input tables fall back to columns
   inferred from scope references when schema is missing, and conservatively keep
-  all known columns for wildcard or unresolved references,
+  all known columns for wildcard or unresolved references. When table-level
+  metadata is provided, each table also includes `table_metadata` with semantic
+  details such as Chinese table name, table description, and warehouse layer,
 - `end_to_end_lineage`: ROOT columns traced back to physical table columns,
   including each target-facing expression and `trace_complete`;
   `trace_incomplete_reasons` is emitted only when tracing stops at patterns
@@ -289,6 +292,26 @@ preserved in `related_metadata`:
 table_name,column_name,type,comment
 ods.users,id,bigint,User ID
 ods.users,status,string,Account status
+```
+
+Table-level semantics can be provided separately with `--table-metadata`:
+
+```csv
+table_name,table_name_cn,table_desc,table_label_layer
+ods.users,User table,User base information table,ODS
+mart.user_snapshot,User snapshot,User snapshot output table,ADS
+```
+
+The generated `profile.json` includes this under each matching table:
+
+```json
+{
+  "table_metadata": {
+    "table_name_cn": "User table",
+    "table_desc": "User base information table",
+    "table_label_layer": "ODS"
+  }
+}
 ```
 
 This warehouse-style shape is also accepted:

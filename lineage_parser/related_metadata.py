@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Iterable, Mapping
 
-from .schema_metadata import column_details_for_table, normalize_table_name
+from .schema_metadata import column_details_for_table, normalize_table_name, table_details_for_table
 from .scope_types import (
     CONSTANT_SCOPE_ID,
     SYSTEM_SCOPE_ID,
@@ -54,10 +54,14 @@ def _input_table_metadata(
             complete = bool(details)
 
         if selected:
-            tables[table] = {
+            item = {
                 "column_details": selected,
                 "metadata_complete": complete,
             }
+            table_detail = table_details_for_table(schema, table) if schema else {}
+            if table_detail:
+                item["table_metadata"] = table_detail
+            tables[table] = item
     return tables
 
 
@@ -76,12 +80,14 @@ def _output_table_metadata(
     else:
         details = [_unknown_column_detail(name) for name in output_names]
         complete = False
-    return {
-        result.target_table: {
-            "column_details": details,
-            "metadata_complete": complete,
-        }
+    item = {
+        "column_details": details,
+        "metadata_complete": complete,
     }
+    table_detail = table_details_for_table(schema, result.target_table) if schema else {}
+    if table_detail:
+        item["table_metadata"] = table_detail
+    return {result.target_table: item}
 
 
 def _unknown_column_detail(name: str) -> dict:

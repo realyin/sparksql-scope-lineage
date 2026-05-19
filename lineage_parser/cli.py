@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 from .html_report import write_html_report
-from .schema_metadata import load_schema
+from .schema_metadata import attach_table_metadata, load_schema, load_table_metadata
 from .scope_builder import parse_all_scope_lineage
 from .scope_serializer import write_output
 from .scope_views import write_views
@@ -21,6 +21,7 @@ def main(argv: list[str] | None = None) -> int:
     parse_cmd.add_argument("--task-name", help="Task name. Defaults to SQL file stem.")
     parse_cmd.add_argument("--out", required=True, help="Output directory")
     parse_cmd.add_argument("--schema", help="Optional CSV/JSON schema metadata")
+    parse_cmd.add_argument("--table-metadata", help="Optional CSV/JSON table-level metadata")
     parse_cmd.add_argument("--md", action="store_true", help="Also write Markdown and Mermaid views")
     parse_cmd.add_argument("--html", action="store_true", help="Also write an offline HTML report")
 
@@ -38,6 +39,8 @@ def _parse_file(args: argparse.Namespace) -> int:
     task_name = args.task_name or sql_path.stem
     out_root = Path(args.out)
     schema = load_schema(args.schema) if args.schema else None
+    if args.table_metadata:
+        schema = attach_table_metadata(schema, load_table_metadata(args.table_metadata))
 
     results = parse_all_scope_lineage(sql, task_name=task_name, schema=schema)
     for result in results:

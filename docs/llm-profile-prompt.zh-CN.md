@@ -20,7 +20,9 @@
    不要判定为 SQL 一定错误。
 6. diagnostics.magic_number 只是硬编码值提示，不等同于血缘错误。
 7. 如果 expression、physical_sources、metadata 被截断，要说明完整细节需要查看 lineage.json。
-8. 输出要面向数据开发/数据治理人员，语言简洁、事实优先。
+8. 如果 related_metadata 中存在 table_metadata 或 column_details.comment，
+   必须优先用表中文名、表描述和字段注释解释业务语义；不要只罗列表名和字段名。
+9. 输出要面向数据开发/数据治理人员，语言简洁、事实优先。
 ```
 
 ## User Prompt 模板
@@ -47,6 +49,7 @@ L1：任务概览
 
 L2：输入输出
 - 主要输入表，最多列 10 个，超过则说明还有更多
+- 如果有 table_metadata，必须写出表中文名/表说明，并解释这些表在任务中的作用
 - 输出表
 - related_metadata 的覆盖情况
 
@@ -58,6 +61,7 @@ L3：加工步骤
 L4：核心字段/指标
 - 根据 important_columns 和 end_to_end_lineage 分组：
   标识字段、时间/分区字段、分类字段、指标字段、重要派生字段
+- 如果 related_metadata 中有字段 comment，必须用字段中文注释解释字段语义
 - 对 CASE WHEN、聚合、窗口函数派生字段说明其来源和用途边界
 
 L5：血缘可信度和风险边界
@@ -91,6 +95,7 @@ profile.json:
 - 如果存在 `trace_complete=false`，是否列出字段和原因；
 - 如果存在 `star_not_expanded`、`unresolved_unqualified_no_schema`
   或 `metadata_complete=false`，是否说明 schema/星号边界；
+- 如果存在 `table_metadata` 或字段 comment，是否用于解释表和字段的业务语义；
 - 是否避免把 `magic_number` 当成血缘错误；
 - 是否没有编造 profile 中不存在的业务指标、业务口径或主键约束。
 

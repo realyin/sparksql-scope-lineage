@@ -224,6 +224,36 @@ schema 缺失或不完整通常会体现在：
 
 在 schema 不完整时，LLM 可以继续解释 SQL 的主链路和已解析字段，但不应声称所有字段血缘都完整。
 
+## 8. 使用表中文名和字段中文注释增强语义
+
+当传入 `--table-metadata` 和带 `column_comment` 的 schema 后，
+`related_metadata.input_tables/output_tables` 会包含两类语义信息：
+
+- `table_metadata`：表中文名、表描述、数据分层；
+- `column_details[].comment`：字段中文注释或业务含义。
+
+LLM 应优先使用这些信息解释输入输出和核心字段。
+
+例如，不要只写：
+
+```text
+读取 dm_opr.dmd_opr_lia_call_info_df。
+```
+
+如果 `table_metadata.table_name_cn` 或 `table_desc` 存在，应写成：
+
+```text
+读取“热线通话明细表”（dm_opr.dmd_opr_lia_call_info_df），作为热线通话事实来源。
+```
+
+字段说明也应优先使用 `column_details.comment`：
+
+```text
+核心字段 call_id 表示通话ID，begin_call_dt 表示通话开始时间。
+```
+
+如果字段没有 comment，再退回字段名和 SQL 表达式进行解释。
+
 ## 任务分级结构输出模板
 
 LLM 最终可以按 L1-L5 输出任务画像。
@@ -242,7 +272,8 @@ LLM 最终可以按 L1-L5 输出任务画像。
 
 ### L2：输入输出
 
-说明输入表、输出表、关键元数据覆盖情况。
+说明输入表、输出表、关键元数据覆盖情况。优先使用 `table_metadata.table_name_cn`
+和 `table_metadata.table_desc` 解释表的业务含义。
 
 模板：
 
@@ -271,6 +302,7 @@ LLM 最终可以按 L1-L5 输出任务画像。
 ### L4：核心字段/指标
 
 基于 `important_columns` 和 `end_to_end_lineage` 输出核心字段。
+如果 `related_metadata` 中有字段注释，优先用字段注释解释字段语义。
 
 模板：
 

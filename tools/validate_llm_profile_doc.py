@@ -40,6 +40,7 @@ def validate_profile_doc(profile: dict[str, Any], doc_text: str) -> dict[str, An
     _check_grain_language(profile, doc_text, findings)
     _check_trace_completeness(profile, doc_text, findings)
     _check_schema_boundaries(profile, doc_text, findings)
+    _check_semantic_metadata_usage(profile, doc_text, findings)
     _check_truncation_boundaries(profile, doc_text, findings)
 
     return {
@@ -158,6 +159,57 @@ def _check_truncation_boundaries(profile: dict[str, Any], doc_text: str, finding
             "code": "truncation_not_disclosed",
             "message": "Profile has truncated sections; document should mention lineage.json for full detail",
         })
+
+
+def _check_semantic_metadata_usage(profile: dict[str, Any], doc_text: str, findings: list[dict[str, str]]) -> None:
+    table_names = _semantic_table_names(profile)
+    if table_names and not any(name in doc_text for name in table_names[:10]):
+        findings.append({
+            "severity": "warning",
+            "code": "table_semantics_not_used",
+            "message": "Profile has table_metadata, but document does not appear to use table Chinese names/descriptions",
+        })
+
+    comments = _important_column_comments(profile)
+    if comments and not any(comment in doc_text for comment in comments[:20]):
+        findings.append({
+            "severity": "warning",
+            "code": "column_semantics_not_used",
+            "message": "Profile has column comments for important columns, but document does not appear to use them",
+        })
+
+
+def _semantic_table_names(profile: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    related = profile.get("related_metadata") or {}
+    for section in ("input_tables", "output_tables"):
+        for metadata in (related.get(section) or {}).values():
+            table_metadata = metadata.get("table_metadata") or {}
+            for key in ("table_name_cn", "table_desc"):
+                value = table_metadata.get(key)
+                if isinstance(value, str) and value and value not in names:
+                    names.append(value)
+    return names
+
+
+def _important_column_comments(profile: dict[str, Any]) -> list[str]:
+    important = {
+        item.get("column")
+        for item in (profile.get("important_columns") or [])
+        if item.get("column")
+    }
+    if not important:
+        return []
+    comments: list[str] = []
+    related = profile.get("related_metadata") or {}
+    for section in ("input_tables", "output_tables"):
+        for metadata in (related.get(section) or {}).values():
+            for column in metadata.get("column_details") or []:
+                comment = column.get("comment")
+                if column.get("name") in important and isinstance(comment, str) and comment:
+                    if comment not in comments:
+                        comments.append(comment)
+    return comments
 
 
 def _has_incomplete_metadata(profile: dict[str, Any]) -> bool:

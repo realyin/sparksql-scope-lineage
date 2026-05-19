@@ -2,6 +2,7 @@ import json
 
 from lineage_parser import parse_scope_lineage
 from lineage_parser import scope_serializer
+from lineage_parser.schema_metadata import SchemaMap
 from lineage_parser.scope_serializer import to_dict, to_profile_dict, write_output
 from lineage_parser.scope_types import DiagnosticWarning
 
@@ -464,6 +465,42 @@ def test_related_metadata_includes_input_tables_missing_from_schema():
             ],
             "metadata_complete": False,
         },
+    }
+
+
+def test_related_metadata_includes_table_level_metadata():
+    sql = "INSERT INTO mart.t SELECT a.id FROM ods.known a"
+    schema = SchemaMap(
+        {"ods.known": ["id"], "mart.t": ["id"]},
+        column_details={
+            "ods.known": [{"name": "id", "type": "string", "comment": "用户ID"}],
+            "mart.t": [{"name": "id", "type": "string", "comment": "用户ID"}],
+        },
+        table_details={
+            "ods.known": {
+                "table_name_cn": "用户源表",
+                "table_desc": "用户基础信息来源表",
+                "table_label_layer": "ODS",
+            },
+            "mart.t": {
+                "table_name_cn": "用户画像表",
+                "table_desc": "用户画像输出表",
+                "table_label_layer": "ADS",
+            },
+        },
+    )
+
+    profile = to_profile_dict(parse_scope_lineage(sql, "metadata_table_detail", schema=schema))
+
+    assert profile["related_metadata"]["input_tables"]["ods.known"]["table_metadata"] == {
+        "table_name_cn": "用户源表",
+        "table_desc": "用户基础信息来源表",
+        "table_label_layer": "ODS",
+    }
+    assert profile["related_metadata"]["output_tables"]["mart.t"]["table_metadata"] == {
+        "table_name_cn": "用户画像表",
+        "table_desc": "用户画像输出表",
+        "table_label_layer": "ADS",
     }
 
 

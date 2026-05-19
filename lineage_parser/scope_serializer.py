@@ -35,7 +35,7 @@ _SCHEMA_PATH = Path(__file__).parent / "schemas" / "lineage.schema.json"
 _schema_cache: dict | None = None
 
 PROFILE_MAX_EXPRESSION_CHARS = 200
-PROFILE_MAX_METADATA_COLUMNS_PER_TABLE = 8
+PROFILE_MAX_METADATA_COLUMNS_PER_TABLE = 5
 PROFILE_MAX_PHYSICAL_SOURCES_PER_COLUMN = 5
 PROFILE_MAX_LOGIC_ITEMS_PER_TYPE = 10
 PROFILE_MAX_WARNINGS = 20
@@ -386,6 +386,9 @@ def _compact_related_metadata(related_metadata: dict) -> None:
     for section in ("input_tables", "output_tables"):
         tables = related_metadata.get(section) or {}
         for metadata in tables.values():
+            table_metadata = metadata.get("table_metadata")
+            if isinstance(table_metadata, dict):
+                metadata["table_metadata"] = _compact_logic_value(table_metadata)
             columns = metadata.get("column_details") or []
             total = len(columns)
             if total > PROFILE_MAX_METADATA_COLUMNS_PER_TABLE:

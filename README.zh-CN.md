@@ -123,6 +123,7 @@ python tools/run_scope_corpus.py \
   --input-dir examples/tasks \
   --out /tmp/scope-output \
   --schema examples/table_cols.csv \
+  --table-metadata examples/table_info.csv \
   --md \
   --html
 ```
@@ -200,7 +201,8 @@ diagnostics、`scope_profile`，以及 ROOT 字段到物理表字段的端到端
   标出关键/派生/指标类输出字段、汇总重要过滤条件，并对重要表达式模式做去重摘要；
 - `related_metadata`：拆分为 `input_tables` 和 `output_tables`。输入表和输出表
   都优先使用 schema 中的 `type/comment`，输入表 schema 缺失时从 scope 引用字段补齐；遇到星号或
-  未解析等不确定引用时，会保守保留该表全部已知字段；
+  未解析等不确定引用时，会保守保留该表全部已知字段；如果传入表级元数据，
+  每张表还会带 `table_metadata`，包含表中文名、表描述和数据分层等语义信息；
 - `end_to_end_lineage`：ROOT 字段追溯到物理表字段，包含最终字段表达式和
   `trace_complete`；只有遇到未展开星号等中断场景时才输出
   `trace_incomplete_reasons`；
@@ -271,7 +273,7 @@ ods.users,country
 ods.users,status
 ```
 
-如果 CSV 中包含可选的 `type`/`column_type` 和 `comment`/`column_comment`，
+如果字段 CSV 中包含可选的 `type`/`column_type` 和 `comment`/`column_comment`，
 会保留到 `related_metadata`：
 
 ```csv
@@ -286,6 +288,26 @@ ods.users,status,string,账号状态
 table_name,column_name,column_type,column_comment
 ods.users,id,bigint,用户ID
 ods.users,status,string,账号状态
+```
+
+表级语义可以通过 `--table-metadata` 单独传入：
+
+```csv
+table_name,table_name_cn,table_desc,table_label_layer
+ods.users,用户表,用户基础信息表,ODS
+mart.user_snapshot,用户快照表,用户快照输出表,ADS
+```
+
+生成的 `profile.json` 会在对应表下输出：
+
+```json
+{
+  "table_metadata": {
+    "table_name_cn": "用户表",
+    "table_desc": "用户基础信息表",
+    "table_label_layer": "ODS"
+  }
+}
 ```
 
 也可以提供 JSON：

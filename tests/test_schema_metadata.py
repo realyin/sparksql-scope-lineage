@@ -2,10 +2,13 @@ import json
 
 from lineage_parser.schema_metadata import (
     DictSchemaProvider,
+    attach_table_metadata,
     column_details_for_table,
     load_schema,
+    load_table_metadata,
     materialize_schema,
     normalize_table_name,
+    table_details_for_table,
 )
 
 
@@ -92,3 +95,30 @@ def test_materialize_schema_from_mock_provider():
 
     assert normalize_table_name("spark_catalog.ods.src") == "ods.src"
     assert schema == {"ods.src": ["id", "name"]}
+
+
+def test_load_table_metadata_csv_and_attach_to_schema(tmp_path):
+    schema_path = tmp_path / "columns.csv"
+    schema_path.write_text(
+        "table_name,column_name,column_type,column_comment\n"
+        "hw_jhy_iceberg.ods.users,id,bigint,用户ID\n",
+        encoding="utf-8",
+    )
+    table_path = tmp_path / "tables.csv"
+    table_path.write_text(
+        "table_name,table_name_cn,table_desc,table_label_layer\n"
+        "hw_jhy_iceberg.ods.users,用户表,用户基础信息表,ODS\n",
+        encoding="utf-8",
+    )
+
+    schema = attach_table_metadata(load_schema(schema_path), load_table_metadata(table_path))
+
+    assert schema == {"ods.users": ["id"]}
+    assert column_details_for_table(schema, "ods.users") == [
+        {"name": "id", "type": "bigint", "comment": "用户ID"}
+    ]
+    assert table_details_for_table(schema, "ods.users") == {
+        "table_name_cn": "用户表",
+        "table_desc": "用户基础信息表",
+        "table_label_layer": "ODS",
+    }
