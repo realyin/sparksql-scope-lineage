@@ -1,6 +1,7 @@
 import json
 
 from lineage_parser.cli import main
+from lineage_parser.schema_metadata import column_details_for_table, load_schema
 
 
 def test_cli_parse_writes_outputs(tmp_path):
@@ -17,6 +18,13 @@ def test_cli_parse_writes_outputs(tmp_path):
         "ods.users,country,string,国家\n",
         encoding="utf-8",
     )
+    table_path = tmp_path / "tables.csv"
+    table_path.write_text(
+        "table_name,table_name_cn,table_desc,table_label_layer\n"
+        "ods.users,用户表,用户基础信息表,ODS\n"
+        "mart.user_snapshot,用户快照表,用户快照输出表,ADS\n",
+        encoding="utf-8",
+    )
     out_dir = tmp_path / "out"
 
     code = main([
@@ -25,6 +33,8 @@ def test_cli_parse_writes_outputs(tmp_path):
         str(sql_path),
         "--schema",
         str(schema_path),
+        "--table-metadata",
+        str(table_path),
         "--out",
         str(out_dir),
         "--md",
@@ -44,6 +54,11 @@ def test_cli_parse_writes_outputs(tmp_path):
                     {"name": "country", "type": "string", "comment": "国家"},
                 ],
                 "metadata_complete": True,
+                "table_metadata": {
+                    "table_name_cn": "用户表",
+                    "table_desc": "用户基础信息表",
+                    "table_label_layer": "ODS",
+                },
             }
         },
         "output_tables": {
@@ -53,6 +68,11 @@ def test_cli_parse_writes_outputs(tmp_path):
                     {"name": "country", "type": None, "comment": None},
                 ],
                 "metadata_complete": False,
+                "table_metadata": {
+                    "table_name_cn": "用户快照表",
+                    "table_desc": "用户快照输出表",
+                    "table_label_layer": "ADS",
+                },
             }
         },
     }
@@ -60,3 +80,21 @@ def test_cli_parse_writes_outputs(tmp_path):
     assert profile["related_metadata"] == data["related_metadata"]
     assert (out_dir / "demo" / "views" / "scope_overview.mmd").exists()
     assert (out_dir / "demo" / "report.html").exists()
+
+
+def test_schema_csv_accepts_column_type_and_column_comment(tmp_path):
+    schema_path = tmp_path / "schema_info.csv"
+    schema_path.write_text(
+        "table_name,column_name,column_type,column_comment\n"
+        "ods.users,id,bigint,用户ID\n"
+        "ods.users,country,string,国家\n",
+        encoding="utf-8",
+    )
+
+    schema = load_schema(schema_path)
+
+    assert schema["ods.users"] == ["id", "country"]
+    assert column_details_for_table(schema, "ods.users") == [
+        {"name": "id", "type": "bigint", "comment": "用户ID"},
+        {"name": "country", "type": "string", "comment": "国家"},
+    ]

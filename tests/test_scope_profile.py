@@ -1,7 +1,10 @@
 import json
 
 from lineage_parser import parse_scope_lineage
+from lineage_parser import scope_serializer
+from lineage_parser.schema_metadata import SchemaMap
 from lineage_parser.scope_serializer import to_dict, to_profile_dict, write_output
+from lineage_parser.scope_types import DiagnosticWarning
 
 
 def _step_by_scope(data, scope_id):
@@ -114,14 +117,80 @@ def test_profile_dict_is_compact_for_llm_preanalysis():
         "stmt_kind",
         "source_tables",
         "related_metadata",
-        "scope_graph",
+        "summary",
+        "business_profile",
+        "business_rule_candidates",
+        "grain",
+        "important_columns",
+        "expression_catalog",
+        "filters_summary",
+        "read_order",
+        "compact_policy",
         "scope_profile",
-        "root_columns",
         "end_to_end_lineage",
         "diagnostics",
     }
+    assert profile["summary"] == {
+        "task_name": "compact_profile",
+        "target_table": "mart.t",
+        "stmt_kind": "INSERT",
+        "input_table_count": 1,
+        "output_column_count": 2,
+        "main_operations": ["case_when"],
+        "main_process": "从1张输入表读取数据，经过case_when后写入 mart.t",
+    }
+    assert profile["grain"] == {
+        "type": "record_level",
+        "keys": ["id"],
+        "key_type": "candidate_output_keys",
+        "confidence": "medium",
+        "evidence": ["id_like_output_columns"],
+        "note": "keys are heuristic candidate output identifiers, not a verified primary key",
+    }
+    assert profile["important_columns"] == [
+        {
+            "column": "id",
+            "transform": "DIRECT",
+            "importance": "medium",
+            "reasons": ["id_or_key_column"],
+        },
+        {
+            "column": "value_range",
+            "transform": "DIRECT",
+            "importance": "medium",
+            "reasons": ["derived_from_physical_sources"],
+        },
+    ]
+    assert profile["expression_catalog"] == [
+        {
+            "id": "expr_1",
+            "type": "CASE_WHEN",
+            "columns": ["value_range"],
+            "summary": "CASE expression with 3 branches",
+            "branch_count": 3,
+        }
+    ]
+    assert profile["filters_summary"] == []
+    assert profile["business_rule_candidates"] == []
+    assert profile["business_profile"]["objective"]["summary"] == (
+        "生成 mart.t；主要读取 ods.scores；语义线索包括 评分/分数"
+    )
+    assert profile["read_order"][:5] == [
+        "summary",
+        "business_profile",
+        "grain",
+        "scope_profile.steps",
+        "business_rule_candidates",
+    ]
     assert "scopes" not in profile
+    assert "scope_graph" not in profile
+    assert "root_columns" not in profile
+    id_lineage = next(item for item in profile["end_to_end_lineage"] if item["column"] == "id")
+    assert id_lineage["expression"] == "`labeled`.`id`"
+    value_range_lineage = next(item for item in profile["end_to_end_lineage"] if item["column"] == "value_range")
+    assert value_range_lineage["expression"] == "`labeled`.`value_range`"
     case_step = next(s for s in profile["scope_profile"]["steps"] if s["scope_id"] == "cte:labeled")
+    assert case_step["business_summary"] == "读取 ods.scores；通过 CASE WHEN 派生字段"
     case_item = case_step["logic"]["case_when"][0]
     assert case_item == {
         "column": "value_range",
@@ -168,7 +237,9 @@ def test_write_output_writes_full_lineage_and_compact_profile(tmp_path):
 
     assert (tmp_path / "lineage.json").exists()
     assert (tmp_path / "profile.json").exists()
-    profile = json.loads((tmp_path / "profile.json").read_text(encoding="utf-8"))
+    profile_text = (tmp_path / "profile.json").read_text(encoding="utf-8")
+    assert "\n" not in profile_text
+    profile = json.loads(profile_text)
     lineage = json.loads((tmp_path / "lineage.json").read_text(encoding="utf-8"))
     assert "scopes" not in profile
     assert "scopes" in lineage
@@ -213,6 +284,7 @@ def test_scope_profile_includes_distinct_union_branches_and_lateral_views():
 
     union = next(s for s in profile["scope_profile"]["steps"] if s["kind"] == "union")
     assert union["logic"]["union_branches"] == 2
+    assert not any(s["kind"] == "union_branch" for s in profile["scope_profile"]["steps"])
 
     lateral = _step_by_scope(profile, "udtf:t")
     assert lateral["logic"]["lateral_views"] == [
@@ -334,6 +406,96 @@ def test_related_metadata_includes_join_fields_without_keeping_whole_join_table(
     ]
 
 
+def test_business_profile_extracts_rule_candidates_and_semantic_hints():
+    sql = """
+    INSERT OVERWRITE TABLE mart.in_collect
+    SELECT a.internal_customer_id, a.acct_nbr
+    FROM ods.loan_all a
+    LEFT JOIN (SELECT DISTINCT contra_no FROM dim.excess) b
+      ON a.contr_nbr = b.contra_no
+    WHERE a.dt = '20260426'
+      AND (a.overdue_date IS NOT NULL OR a.in_clct_dpd BETWEEN -7 AND 0 OR b.contra_no IS NOT NULL)
+    """
+    schema = SchemaMap(
+        {
+            "ods.loan_all": ["internal_customer_id", "acct_nbr", "dt", "overdue_date", "in_clct_dpd", "contr_nbr", "unused"],
+            "dim.excess": ["contra_no"],
+            "mart.in_collect": ["internal_customer_id", "acct_nbr"],
+        },
+        column_details={
+            "ods.loan_all": [
+                {"name": "internal_customer_id", "type": "string", "comment": "客户ID"},
+                {"name": "acct_nbr", "type": "string", "comment": "账户号"},
+                {"name": "dt", "type": "string", "comment": "日期分区"},
+                {"name": "overdue_date", "type": "string", "comment": "逾期日期"},
+                {"name": "in_clct_dpd", "type": "int", "comment": "入催DPD"},
+                {"name": "contr_nbr", "type": "string", "comment": "合同号"},
+                {"name": "unused", "type": "string", "comment": "未使用"},
+            ],
+            "dim.excess": [
+                {"name": "contra_no", "type": "string", "comment": "超额合同号"},
+            ],
+            "mart.in_collect": [
+                {"name": "internal_customer_id", "type": "string", "comment": "客户ID"},
+                {"name": "acct_nbr", "type": "string", "comment": "账户号"},
+            ],
+        },
+        table_details={
+            "ods.loan_all": {"table_name_cn": "贷款全量表"},
+            "dim.excess": {"table_name_cn": "超额合同维表"},
+            "mart.in_collect": {"table_name_cn": "入催名单表"},
+        },
+    )
+
+    profile = to_profile_dict(parse_scope_lineage(sql, "business_profile", schema=schema))
+
+    assert "入催名单表" in profile["business_profile"]["objective"]["summary"]
+    assert "入催" in profile["business_profile"]["objective"]["semantic_hints"]
+    assert profile["business_profile"]["objective"]["primary_decision"] == "是否保留/纳入目标结果"
+    dedup_step = _step_by_scope(profile, "subq:b")
+    assert dedup_step["role"] == "dedup"
+
+    where_rule = next(item for item in profile["business_rule_candidates"] if item["source"] == "WHERE")
+    assert where_rule["condition_group_type"] == "MIXED_AND_OR"
+    assert where_rule["fields"] == ["dt", "in_clct_dpd", "contra_no", "overdue_date"]
+    assert {item["comment"] for item in where_rule["field_details"]} >= {"日期分区", "入催DPD", "超额合同号", "逾期日期"}
+
+    join_rule = next(item for item in profile["business_rule_candidates"] if item["source"] == "JOIN_ON")
+    assert join_rule["fields"] == ["contr_nbr", "contra_no"]
+
+
+def test_metadata_compaction_prioritizes_rule_and_lineage_columns(monkeypatch):
+    monkeypatch.setattr(scope_serializer, "PROFILE_MAX_METADATA_COLUMNS_PER_TABLE", 3)
+    sql = """
+    INSERT INTO mart.t
+    SELECT a.id, a.metric
+    FROM ods.wide a
+    WHERE a.dt = '20260515' AND a.important_flag = 'Y'
+    """
+    schema = {
+        "ods.wide": [
+            {"name": "unused_1", "type": "string", "comment": "未使用1"},
+            {"name": "unused_2", "type": "string", "comment": "未使用2"},
+            {"name": "id", "type": "string", "comment": "主键"},
+            {"name": "metric", "type": "decimal", "comment": "指标"},
+            {"name": "dt", "type": "string", "comment": "分区"},
+            {"name": "important_flag", "type": "string", "comment": "重要标记"},
+        ],
+        "mart.t": [
+            {"name": "id", "type": "string", "comment": "主键"},
+            {"name": "metric", "type": "decimal", "comment": "指标"},
+        ],
+    }
+
+    profile = to_profile_dict(parse_scope_lineage(sql, "metadata_priority", schema=schema))
+
+    names = [
+        item["name"]
+        for item in profile["related_metadata"]["input_tables"]["ods.wide"]["column_details"]
+    ]
+    assert names == ["dt", "important_flag", "id"]
+
+
 def test_related_metadata_keeps_all_columns_for_uncertain_star_reference():
     sql = "INSERT INTO mart.t SELECT a.* FROM report_csc_ana.hotline_detail_realtime a"
     schema = {
@@ -406,3 +568,100 @@ def test_related_metadata_includes_input_tables_missing_from_schema():
             "metadata_complete": False,
         },
     }
+
+
+def test_related_metadata_includes_table_level_metadata():
+    sql = "INSERT INTO mart.t SELECT a.id FROM ods.known a"
+    schema = SchemaMap(
+        {"ods.known": ["id"], "mart.t": ["id"]},
+        column_details={
+            "ods.known": [{"name": "id", "type": "string", "comment": "用户ID"}],
+            "mart.t": [{"name": "id", "type": "string", "comment": "用户ID"}],
+        },
+        table_details={
+            "ods.known": {
+                "table_name_cn": "用户源表",
+                "table_desc": "用户基础信息来源表",
+                "table_label_layer": "ODS",
+            },
+            "mart.t": {
+                "table_name_cn": "用户画像表",
+                "table_desc": "用户画像输出表",
+                "table_label_layer": "ADS",
+            },
+        },
+    )
+
+    profile = to_profile_dict(parse_scope_lineage(sql, "metadata_table_detail", schema=schema))
+
+    assert profile["related_metadata"]["input_tables"]["ods.known"]["table_metadata"] == {
+        "table_name_cn": "用户源表",
+        "table_desc": "用户基础信息来源表",
+        "table_label_layer": "ODS",
+    }
+    assert profile["related_metadata"]["output_tables"]["mart.t"]["table_metadata"] == {
+        "table_name_cn": "用户画像表",
+        "table_desc": "用户画像输出表",
+        "table_label_layer": "ADS",
+    }
+
+
+def test_profile_compaction_truncates_large_sections(monkeypatch):
+    monkeypatch.setattr(scope_serializer, "PROFILE_MAX_EXPRESSION_CHARS", 20)
+    monkeypatch.setattr(scope_serializer, "PROFILE_MAX_METADATA_COLUMNS_PER_TABLE", 2)
+    monkeypatch.setattr(scope_serializer, "PROFILE_MAX_PHYSICAL_SOURCES_PER_COLUMN", 1)
+    monkeypatch.setattr(scope_serializer, "PROFILE_MAX_SOURCE_TABLES", 1)
+    monkeypatch.setattr(scope_serializer, "PROFILE_MAX_WARNINGS", 1)
+
+    schema = {
+        "ods.a": [
+            {"name": "id", "type": "string", "comment": "ID"},
+            {"name": "c1", "type": "string", "comment": "一"},
+            {"name": "c2", "type": "string", "comment": "二"},
+            {"name": "c3", "type": "string", "comment": "三"},
+        ],
+        "ods.b": [
+            {"name": "id", "type": "string", "comment": "ID"},
+            {"name": "c1", "type": "string", "comment": "一"},
+        ],
+    }
+    sql = """
+    INSERT INTO mart.t
+    SELECT
+      CONCAT(a.c1, a.c2, a.c3, b.c1, 'this is a deliberately long literal') AS long_expr,
+      CASE WHEN a.c1 = 'x' THEN a.c2 ELSE b.c1 END AS mixed_col
+    FROM ods.a a
+    LEFT JOIN ods.b b
+      ON a.id = b.id
+    WHERE a.c1 = 'x'
+    """
+
+    result = parse_scope_lineage(sql, "profile_compaction", schema=schema)
+    result.diagnostics.warnings.append(DiagnosticWarning(type="magic_number", scope="ROOT", msg="first"))
+    result.diagnostics.warnings.append(DiagnosticWarning(type="magic_number", scope="ROOT", msg="second"))
+
+    profile = to_profile_dict(result)
+
+    assert profile["source_tables_count"] == 2
+    assert profile["source_tables_truncated"] is True
+    assert profile["source_tables"] == ["ods.a"]
+
+    long_expr = next(item for item in profile["end_to_end_lineage"] if item["column"] == "long_expr")
+    assert len(long_expr["expression"]) <= 20
+    assert long_expr["expression_truncated"] is True
+    assert long_expr["expression_length"] > len(long_expr["expression"])
+    assert long_expr["physical_source_count"] > len(long_expr["physical_sources"])
+    assert long_expr["physical_sources_truncated"] is True
+
+    table_meta = profile["related_metadata"]["input_tables"]["ods.a"]
+    assert len(table_meta["column_details"]) == 2
+    assert table_meta["column_count"] == 4
+    assert table_meta["shown_column_count"] == 2
+    assert table_meta["columns_truncated"] is True
+
+    diagnostics = profile["diagnostics"]
+    assert diagnostics["warning_count"] == 2
+    assert diagnostics["warnings_truncated"] is True
+    assert diagnostics["warning_types"] == {"magic_number": 2}
+    assert len(diagnostics["warnings_sample"]) == 1
+    assert "warnings" not in diagnostics

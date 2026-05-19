@@ -20,12 +20,17 @@ class SchemaMap(dict):
         self,
         *args,
         column_details: Mapping[str, list[dict]] | None = None,
+        table_details: Mapping[str, dict] | None = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self.column_details = {
             normalize_table_name(table): [_normalize_column_detail(item) for item in details]
             for table, details in (column_details or {}).items()
+        }
+        self.table_details = {
+            normalize_table_name(table): _normalize_table_detail(table, detail, include_table_name=False)
+            for table, detail in (table_details or {}).items()
         }
 
 
@@ -93,7 +98,7 @@ def load_schema(path: str | Path) -> SchemaMap:
 
     Supported CSV shape:
       - rows with ``table_name`` and ``column_name``
-      - optional ``type`` and ``comment`` columns
+      - optional ``type``/``column_type`` and ``comment``/``column_comment`` columns
 
     Supported JSON shapes:
       - ``{"db.table": ["c1", "c2"]}``
@@ -112,6 +117,87 @@ def load_schema(path: str | Path) -> SchemaMap:
     raise ValueError(f"Unsupported schema metadata file type: {path}")
 
 
+def load_table_metadata(path: str | Path) -> dict[str, dict]:
+    """Load table-level metadata from CSV or JSON.
+
+    Supported CSV columns include:
+      - ``table_name``
+      - ``table_name_cn``
+      - ``table_desc`` or ``comment``
+      - ``table_label_layer`` or ``layer``
+
+    Supported JSON shapes include:
+      - ``{"db.table": {"table_name_cn": "...", "table_desc": "..."}}``
+      - ``[{"table_name": "db.table", "table_name_cn": "..."}]``
+      - ``{"tables": [{"table_name": "db.table", ...}]}``
+    """
+
+    path = Path(path)
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        return load_table_metadata_csv(path)
+    if suffix == ".json":
+        return load_table_metadata_json(path)
+    raise ValueError(f"Unsupported table metadata file type: {path}")
+
+
+def load_table_metadata_csv(path: str | Path) -> dict[str, dict]:
+    metadata: dict[str, dict] = {}
+    with Path(path).open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            detail = _normalize_table_detail(row.get("table_name") or row.get("table") or "", row)
+            table = detail.pop("table_name", "")
+            key = normalize_table_name(table)
+            if key:
+                metadata[key] = detail
+    return metadata
+
+
+def load_table_metadata_json(path: str | Path) -> dict[str, dict]:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    metadata: dict[str, dict] = {}
+
+    if isinstance(data, dict) and isinstance(data.get("tables"), list):
+        rows = data["tables"]
+    elif isinstance(data, list):
+        rows = data
+    elif isinstance(data, dict):
+        rows = []
+        for table, detail in data.items():
+            if table == "tables":
+                continue
+            if isinstance(detail, dict):
+                row = {"table_name": table, **detail}
+            else:
+                row = {"table_name": table, "table_desc": str(detail)}
+            rows.append(row)
+    else:
+        raise ValueError("Unsupported JSON table metadata shape")
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        detail = _normalize_table_detail(row.get("table_name") or row.get("table") or "", row)
+        table = detail.pop("table_name", "")
+        key = normalize_table_name(table)
+        if key:
+            metadata[key] = detail
+    return metadata
+
+
+def attach_table_metadata(schema: SchemaMap | None, table_metadata: Mapping[str, dict]) -> SchemaMap:
+    """Attach table metadata to an existing SchemaMap, creating one if needed."""
+    if schema is None:
+        schema = SchemaMap()
+    if not isinstance(schema, SchemaMap):
+        schema = normalize_schema_map(schema)
+    for table, detail in table_metadata.items():
+        key = normalize_table_name(table)
+        if key:
+            schema.table_details[key] = _normalize_table_detail(key, detail, include_table_name=False)
+    return schema
+
+
 def load_schema_csv(path: str | Path) -> SchemaMap:
     schema: SchemaMap = SchemaMap()
     with Path(path).open(encoding="utf-8-sig", newline="") as f:
@@ -120,7 +206,7 @@ def load_schema_csv(path: str | Path) -> SchemaMap:
             column = row.get("column_name") or row.get("column") or row.get("name") or ""
             detail = {
                 "name": column,
-                "type": row.get("type") or row.get("data_type"),
+                "type": row.get("type") or row.get("data_type") or row.get("column_type"),
                 "comment": row.get("comment") or row.get("column_comment"),
             }
             _append_schema_column(schema, table, detail)
@@ -166,7 +252,7 @@ def _schema_from_json_value(data) -> SchemaMap:
             table = item.get("table_name") or item.get("table") or ""
             column = {
                 "name": item.get("column_name") or item.get("column") or item.get("name") or "",
-                "type": item.get("type") or item.get("data_type"),
+                "type": item.get("type") or item.get("data_type") or item.get("column_type"),
                 "comment": item.get("comment") or item.get("column_comment"),
             }
             _append_schema_column(schema, table, column)
@@ -229,13 +315,45 @@ def _normalize_column_detail(column: str | Mapping | None) -> dict:
         raw = {}
 
     name = raw.get("column_name") or raw.get("name") or raw.get("column") or ""
-    col_type = raw.get("type") or raw.get("data_type")
+    col_type = raw.get("type") or raw.get("data_type") or raw.get("column_type")
     comment = raw.get("comment") or raw.get("column_comment")
     return {
         "name": (name or "").strip().strip("`"),
         "type": _blank_to_none(col_type),
         "comment": _blank_to_none(comment),
     }
+
+
+def _normalize_table_detail(
+    table: str,
+    detail: Mapping | None,
+    *,
+    include_table_name: bool = True,
+) -> dict:
+    raw = dict(detail or {})
+    result = {
+        "table_name_cn": _blank_to_none(
+            raw.get("table_name_cn")
+            or raw.get("name_cn")
+            or raw.get("table_comment")
+            or raw.get("comment")
+        ),
+        "table_desc": _blank_to_none(
+            raw.get("table_desc")
+            or raw.get("description")
+            or raw.get("desc")
+            or raw.get("comment")
+        ),
+        "table_label_layer": _blank_to_none(
+            raw.get("table_label_layer")
+            or raw.get("layer")
+            or raw.get("data_layer")
+        ),
+    }
+    result = {key: value for key, value in result.items() if value is not None}
+    if include_table_name:
+        result["table_name"] = (table or raw.get("table_name") or raw.get("table") or "").strip().strip("`")
+    return result
 
 
 def _merge_column_details(schema: SchemaMap, table_key: str, details: Iterable[dict]) -> None:
@@ -266,6 +384,14 @@ def column_details_for_table(schema: Mapping[str, Iterable[str]], table_name: st
 
     cols = lookup_columns(schema, table_name) or []
     return [{"name": col, "type": None, "comment": None} for col in cols]
+
+
+def table_details_for_table(schema: Mapping[str, Iterable[str]], table_name: str) -> dict:
+    """Return table-level metadata for a table, if attached to the schema."""
+    key = normalize_table_name(table_name)
+    details_by_table = getattr(schema, "table_details", {})
+    detail = details_by_table.get(key)
+    return dict(detail) if detail is not None else {}
 
 
 def _blank_to_none(value) -> str | None:

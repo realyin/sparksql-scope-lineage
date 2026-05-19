@@ -90,3 +90,40 @@ columns inferred from SQL references with `type/comment` set to null and
 Output table metadata also uses schema details when the target table is present
 in schema metadata. If target schema is missing, it falls back to ROOT output
 columns with `type/comment=null` and `metadata_complete=false`.
+
+## Table Metadata
+
+Column schema metadata can be paired with table-level semantic metadata:
+
+```csv
+table_name,table_name_cn,table_desc,table_label_layer
+ods.users,用户表,用户基础信息表,ODS
+mart.user_snapshot,用户快照表,用户快照输出表,ADS
+```
+
+Use it from the CLI with:
+
+```bash
+scope-lineage parse \
+  --sql-file task.sql \
+  --schema columns_metadata.csv \
+  --table-metadata tables_metadata.csv \
+  --out /tmp/scope-output
+```
+
+When a table matches, `related_metadata.input_tables` or
+`related_metadata.output_tables` includes:
+
+```json
+{
+  "table_metadata": {
+    "table_name_cn": "用户表",
+    "table_desc": "用户基础信息表",
+    "table_label_layer": "ODS"
+  }
+}
+```
+
+This metadata is especially useful for LLM task profiles because it lets the
+model explain a source table semantically instead of only listing its technical
+name.

@@ -19,7 +19,15 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 TASK_INFO = ROOT.parent / "task_info"
 sys.path.insert(0, str(ROOT))
 
-from lineage_parser import load_schema, parse_all_scope_lineage, write_html_report, write_output, write_views  # noqa: E402
+from lineage_parser import (  # noqa: E402
+    attach_table_metadata,
+    load_schema,
+    load_table_metadata,
+    parse_all_scope_lineage,
+    write_html_report,
+    write_output,
+    write_views,
+)
 
 
 def run_directory(
@@ -80,13 +88,22 @@ def main():
             "Supports CSV(table_name,column_name) or JSON mock metadata."
         ),
     )
+    parser.add_argument(
+        "--table-metadata",
+        help="Optional table-level metadata file with table_name/table_name_cn/table_desc.",
+    )
     args = parser.parse_args()
 
     out_root = pathlib.Path(args.out)
     out_root.mkdir(parents=True, exist_ok=True)
     schema = load_schema(args.schema) if args.schema else None
+    if args.table_metadata:
+        schema = attach_table_metadata(schema, load_table_metadata(args.table_metadata))
     if schema is not None:
         print(f"Loaded schema metadata: {len(schema)} tables")
+        table_details = getattr(schema, "table_details", {})
+        if table_details:
+            print(f"Loaded table metadata: {len(table_details)} tables")
 
     if args.input_dir:
         input_dir = pathlib.Path(args.input_dir)

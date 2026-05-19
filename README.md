@@ -118,6 +118,7 @@ python tools/run_scope_corpus.py \
   --input-dir examples/tasks \
   --out /tmp/scope-output \
   --schema examples/table_cols.csv \
+  --table-metadata examples/table_info.csv \
   --md \
   --html
 ```
@@ -189,21 +190,41 @@ end-to-end physical lineage for ROOT columns.
 intermediate `scopes` payload and keeps the pieces that explain the SQL at a
 business-logic level:
 
-- `scope_graph`: the scope-level DAG,
 - `scope_profile`: one processing step per scope, with role, operations,
-  physical source tables, joins, filters, aggregations, windows, CASE summaries,
-  key renames, DISTINCT flags, UNION branch counts, and lateral-view expansions.
-  Parser-only pass-through scopes are omitted, and `profile_step_count` counts
-  only the retained profile steps,
+  business summaries, physical source tables, joins, filters, aggregations,
+  windows, CASE summaries, key renames, DISTINCT flags, UNION branch counts, and
+  lateral-view expansions. Parser-only pass-through scopes are omitted, and
+  `profile_step_count` counts only the retained profile steps,
+- `summary`, `grain`, `important_columns`, `filters_summary`, and
+  `expression_catalog`: lightweight LLM reading aids that summarize the task,
+  infer the likely row grain, highlight key/derived/metric-like output columns,
+  gather important filters, and de-duplicate notable expression patterns,
+- `business_profile` and `business_rule_candidates`: business-facing evidence
+  derived from scopes. `business_profile` gives objective clues and per-scope
+  sections, while `business_rule_candidates` groups WHERE/HAVING/JOIN
+  conditions with referenced fields, column comments, operator hints, and raw
+  summaries so an LLM can describe rules such as eligibility, exclusion, or
+  classification logic without reading one giant SQL predicate,
 - `related_metadata`: `input_tables` and `output_tables` metadata. Entries keep
   schema `type/comment` when available. Input tables fall back to columns
   inferred from scope references when schema is missing, and conservatively keep
-  all known columns for wildcard or unresolved references,
-- `root_columns`: the target-facing columns,
+  all known columns for wildcard or unresolved references. When table-level
+  metadata is provided, each table also includes `table_metadata` with semantic
+  details such as Chinese table name, table description, and warehouse layer,
 - `end_to_end_lineage`: ROOT columns traced back to physical table columns,
-  including `trace_complete`; `trace_incomplete_reasons` is emitted only when
-  tracing stops at patterns such as unexpanded stars,
+  including each target-facing expression and `trace_complete`;
+  `trace_incomplete_reasons` is emitted only when tracing stops at patterns
+  such as unexpanded stars,
 - `diagnostics`: warnings and parser confidence signals.
+
+To keep the artifact LLM-readable, `profile.json` applies conservative
+compaction only to this compact output: long expressions are truncated with
+length markers, per-table metadata columns and per-column physical sources are
+bounded with count/truncation flags, and diagnostics warnings are summarized
+with type counts plus a sample. When table column metadata must be truncated,
+columns referenced by business rules, joins, and important lineage fields are
+kept first. Full detail remains available in `lineage.json` and
+`diagnostics.json`.
 
 `report.html` is a self-contained offline visual report with a scope DAG, ROOT
 column table, focused field lineage, and diagnostics. It does not load CDN
@@ -272,10 +293,39 @@ ods.users,country
 ods.users,status
 ```
 
-Optional `type` and `comment` columns are preserved in `related_metadata`:
+Optional `type`/`column_type` and `comment`/`column_comment` columns are
+preserved in `related_metadata`:
 
 ```csv
 table_name,column_name,type,comment
+ods.users,id,bigint,User ID
+ods.users,status,string,Account status
+```
+
+Table-level semantics can be provided separately with `--table-metadata`:
+
+```csv
+table_name,table_name_cn,table_desc,table_label_layer
+ods.users,User table,User base information table,ODS
+mart.user_snapshot,User snapshot,User snapshot output table,ADS
+```
+
+The generated `profile.json` includes this under each matching table:
+
+```json
+{
+  "table_metadata": {
+    "table_name_cn": "User table",
+    "table_desc": "User base information table",
+    "table_label_layer": "ODS"
+  }
+}
+```
+
+This warehouse-style shape is also accepted:
+
+```csv
+table_name,column_name,column_type,column_comment
 ods.users,id,bigint,User ID
 ods.users,status,string,Account status
 ```

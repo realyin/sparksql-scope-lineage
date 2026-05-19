@@ -1,0 +1,3 @@
+table_name,table_name_cn,table_desc,table_label_layer
+ods.users,用户基础表,用户基础信息明细,ODS
+mart.user_snapshot,用户快照表,用户日粒度快照宽表,ADS

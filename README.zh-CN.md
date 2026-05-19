@@ -123,6 +123,7 @@ python tools/run_scope_corpus.py \
   --input-dir examples/tasks \
   --out /tmp/scope-output \
   --schema examples/table_cols.csv \
+  --table-metadata examples/table_info.csv \
   --md \
   --html
 ```
@@ -191,18 +192,32 @@ diagnostics、`scope_profile`，以及 ROOT 字段到物理表字段的端到端
 `profile.json` 是给 LLM/任务画像使用的轻量产物。它不包含完整的中间 `scopes`
 明细，只保留解释 SQL 加工逻辑所需的信息：
 
-- `scope_graph`：scope 级 DAG；
-- `scope_profile`：每个 scope 一步加工摘要，包含 role、operations、物理源表、
-  joins、filters、aggregations、window、CASE 摘要、关键重命名、DISTINCT 标记、
-  UNION 分支数和 lateral view 展开信息；解析器产生的纯透传 scope 会被过滤，
-  `profile_step_count` 只统计保留下来的画像步骤；
+- `scope_profile`：每个 scope 一步加工摘要，包含 role、operations、
+  business_summary、物理源表、joins、filters、aggregations、window、CASE 摘要、
+  关键重命名、DISTINCT 标记、UNION 分支数和 lateral view 展开信息；解析器产生的
+  纯透传 scope 会被过滤，`profile_step_count` 只统计保留下来的画像步骤；
+- `summary`、`grain`、`important_columns`、`filters_summary` 和
+  `expression_catalog`：给 LLM 使用的轻量阅读索引，用来概括任务、推断可能的数据粒度、
+  标出关键/派生/指标类输出字段、汇总重要过滤条件，并对重要表达式模式做去重摘要；
+- `business_profile` 和 `business_rule_candidates`：面向业务解释的 scope 证据层。
+  `business_profile` 给出目标线索和每个 scope 的业务段落骨架；
+  `business_rule_candidates` 会把 WHERE/HAVING/JOIN 条件整理成规则候选，
+  包含涉及字段、字段注释、操作符线索和条件摘要，方便 LLM 从业务视角描述“准入/排除/
+  分类/判断”等规则，而不是直接阅读一大段 SQL 谓词；
 - `related_metadata`：拆分为 `input_tables` 和 `output_tables`。输入表和输出表
   都优先使用 schema 中的 `type/comment`，输入表 schema 缺失时从 scope 引用字段补齐；遇到星号或
-  未解析等不确定引用时，会保守保留该表全部已知字段；
-- `root_columns`：最终输出字段；
-- `end_to_end_lineage`：ROOT 字段追溯到物理表字段，并带 `trace_complete`；
-  只有遇到未展开星号等中断场景时才输出 `trace_incomplete_reasons`；
+  未解析等不确定引用时，会保守保留该表全部已知字段；如果传入表级元数据，
+  每张表还会带 `table_metadata`，包含表中文名、表描述和数据分层等语义信息；
+- `end_to_end_lineage`：ROOT 字段追溯到物理表字段，包含最终字段表达式和
+  `trace_complete`；只有遇到未展开星号等中断场景时才输出
+  `trace_incomplete_reasons`；
 - `diagnostics`：warning 和解析置信度信号。
+
+为了让大模型更容易一次读完，`profile.json` 会做保守瘦身：超长表达式会截断并保留
+长度标记；每张表的字段元数据、每个输出字段的物理来源会限制数量并保留 count/truncated
+标记；字段元数据被截断时，会优先保留业务规则、join 和重要血缘字段涉及的字段注释；
+diagnostics warnings 会输出类型统计和样例。完整细节仍保留在 `lineage.json` 和
+`diagnostics.json`。
 
 `report.html` 是自包含的离线可视化报告，包含 scope DAG、ROOT 字段表、单字段
 聚焦血缘和 diagnostics。它不依赖 CDN、字体、脚本或本地旁路文件，可以直接在
@@ -248,6 +263,8 @@ SQL
 - [Scope 模型](docs/scope-model.md)
 - [原理说明](docs/how-it-works.zh-CN.md)
 - [Schema 元数据](docs/schema-metadata.md)
+- [LLM Profile 使用指南](docs/llm-profile-guide.zh-CN.md)
+- [LLM Profile Prompt 模板](docs/llm-profile-prompt.zh-CN.md)
 - [审计方法](docs/audit-methodology.md)
 - [限制说明](docs/limitations.md)
 
@@ -262,12 +279,41 @@ ods.users,country
 ods.users,status
 ```
 
-如果 CSV 中包含可选的 `type` 和 `comment`，会保留到 `related_metadata`：
+如果字段 CSV 中包含可选的 `type`/`column_type` 和 `comment`/`column_comment`，
+会保留到 `related_metadata`：
 
 ```csv
 table_name,column_name,type,comment
 ods.users,id,bigint,用户ID
 ods.users,status,string,账号状态
+```
+
+也支持数仓常见的字段命名：
+
+```csv
+table_name,column_name,column_type,column_comment
+ods.users,id,bigint,用户ID
+ods.users,status,string,账号状态
+```
+
+表级语义可以通过 `--table-metadata` 单独传入：
+
+```csv
+table_name,table_name_cn,table_desc,table_label_layer
+ods.users,用户表,用户基础信息表,ODS
+mart.user_snapshot,用户快照表,用户快照输出表,ADS
+```
+
+生成的 `profile.json` 会在对应表下输出：
+
+```json
+{
+  "table_metadata": {
+    "table_name_cn": "用户表",
+    "table_desc": "用户基础信息表",
+    "table_label_layer": "ODS"
+  }
+}
 ```
 
 也可以提供 JSON：

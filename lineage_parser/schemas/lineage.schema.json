@@ -34,6 +34,7 @@
         "properties": {
           "column": { "type": "string" },
           "transform": { "type": "string" },
+          "expression": { "type": ["string", "null"] },
           "trace_complete": { "type": "boolean" },
           "trace_incomplete_reasons": {
             "type": "array",
