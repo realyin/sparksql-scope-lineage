@@ -23,6 +23,14 @@
 8. 如果 related_metadata 中存在 table_metadata 或 column_details.comment，
    必须优先用表中文名、表描述和字段注释解释业务语义；不要只罗列表名和字段名。
 9. 输出要面向数据开发/数据治理人员，语言简洁、事实优先。
+10. business_profile.objective.summary 是程序生成的语义线索，不是最终业务结论；
+    你需要结合 business_rule_candidates、scope_profile.steps、related_metadata、
+    important_columns 和 end_to_end_lineage 再归纳业务目标。
+11. 必须显式使用 business_profile.sections 和 business_rule_candidates：
+    把复杂 WHERE/JOIN 条件归纳成业务规则组，例如准入规则、排除规则、状态判断、
+    时间窗口、去重取最新、渠道合并、指标聚合等。
+12. 如果 profile 中存在 expression_catalog、filters_summary、diagnostics.warning_types、
+    compact_policy.*_truncated 或 *_omitted，也必须在合适章节体现其含义或边界。
 ```
 
 ## User Prompt 模板
@@ -41,6 +49,19 @@
 8. related_metadata
 9. diagnostics
 
+读取要求：
+- summary：只用于建立任务规模和主要操作，不要只复述 main_process。
+- business_profile.objective：提炼任务目标，但要用后续证据校验。
+- business_profile.sections：识别任务由几部分构成，每部分的输入、处理动作、输出和条件。
+- business_rule_candidates：提炼业务规则组，优先解释字段注释和 raw_summary，而不是粘贴 SQL。
+- scope_profile.steps：补充 join/filter/aggregate/window/case/union/lateral_view 的实际加工方式。
+- important_columns：挑选核心业务字段、指标字段、标识字段。
+- expression_catalog：解释重要 CASE/聚合/窗口/表达式派生字段的业务含义或边界。
+- filters_summary：补充 business_rule_candidates 未覆盖的高层过滤条件。
+- end_to_end_lineage：说明字段来源、表达式和 trace_complete 可信度。
+- related_metadata：用表中文名和字段中文注释解释语义。
+- diagnostics 和 compact_policy：说明解析风险、硬编码提示、截断/省略边界。
+
 输出结构必须包含：
 
 L1：任务概览
@@ -49,19 +70,28 @@ L1：任务概览
 - 主要加工操作
 - 优先结合 business_profile.objective，用 1-2 句话概括任务在做什么；如果有
   primary_decision 或 semantic_hints，要说明它是在做什么业务判断/筛选/分类
+- 写出“业务目标推断依据”，至少引用目标表语义、输入表语义、规则字段或核心输出字段
 
 L2：输入输出
 - 主要输入表，最多列 10 个，超过则说明还有更多
 - 如果有 table_metadata，必须写出表中文名/表说明，并解释这些表在任务中的作用
 - 输出表
 - related_metadata 的覆盖情况
+- 如果输出表缺少中文名，只能写成“目标表名/分层线索”，不要编造中文业务名
 
 L3：加工步骤
 - 按 scope_profile.steps 顺序总结主要加工链路
 - 优先保留 join、filter、aggregate、window、case_when、union、lateral_view
 - 对每个关键步骤，结合 business_profile.sections 和 business_rule_candidates
   说明“条件是什么、处理动作是什么、输出到哪里”
+- 对 UNION 任务说明各分支在合并什么来源；对窗口函数说明是在排序、去重、取首/取末；
+  对聚合说明指标或汇总口径；对 CASE WHEN 说明分类/状态派生含义
 - 不要列出无业务意义的解析细节
+
+L3.5：业务规则/判断逻辑
+- 必须单独列出从 business_rule_candidates 和 filters_summary 归纳出的规则组
+- 每个规则组包含：规则名称、涉及字段、字段中文语义、规则作用
+- 不要只写“按过滤条件筛选”，要解释筛选条件在业务上可能表示什么
 
 L4：核心字段/指标
 - 根据 important_columns 和 end_to_end_lineage 分组：
@@ -69,12 +99,17 @@ L4：核心字段/指标
 - business_rule_candidates 中出现的字段通常是业务判断字段，也要纳入核心字段说明
 - 如果 related_metadata 中有字段 comment，必须用字段中文注释解释字段语义
 - 对 CASE WHEN、聚合、窗口函数派生字段说明其来源和用途边界
+- 对每类字段说明“为什么核心”，不能只罗列字段名
 
 L5：血缘可信度和风险边界
 - 统计 trace_complete=true/false 的输出字段数量
 - 列出 trace_complete=false 的字段和原因
 - 说明 schema 缺失、SELECT *、metadata_complete=false、截断等边界
 - 明确哪些风险影响精确字段追溯，哪些只是提示信息
+- 明确 diagnostics.warning_types 的含义，例如 magic_number、filter_in_join_on_clause、
+  duplicate_table_in_union、star_not_expanded 等
+- 如果 compact_policy 显示 large_profile_compaction、expression_omitted、
+  sections_truncated、fields_truncated 等，要说明 profile 已瘦身，完整细节看 lineage.json
 
 额外要求：
 - 不要把 grain.keys 称为主键，只能称为候选输出标识字段。
@@ -97,12 +132,17 @@ profile.json:
 - 是否准确写出 `task_name` 和 `target_table`；
 - 是否没有把 `grain.keys` 写成主键；
 - 是否说明 `grain.keys` 是候选输出标识字段；
+- 是否使用 business_profile.objective、business_profile.sections 和 business_rule_candidates
+  归纳业务目标、组成部分和判断规则；
+- 是否没有把 business_profile.objective.summary 原样当最终业务结论；
+- 是否使用 expression_catalog / filters_summary 补充派生字段和过滤规则；
 - 是否统计了 `trace_complete=true/false`；
 - 如果存在 `trace_complete=false`，是否列出字段和原因；
 - 如果存在 `star_not_expanded`、`unresolved_unqualified_no_schema`
   或 `metadata_complete=false`，是否说明 schema/星号边界；
 - 如果存在 `table_metadata` 或字段 comment，是否用于解释表和字段的业务语义；
 - 是否避免把 `magic_number` 当成血缘错误；
+- 是否说明 compact_policy 中的截断/省略边界；
 - 是否没有编造 profile 中不存在的业务指标、业务口径或主键约束。
 
 ## 推荐输出骨架
@@ -119,6 +159,10 @@ profile.json:
 ...
 
 ## L3：加工步骤
+
+...
+
+## L3.5：业务规则/判断逻辑
 
 ...
 

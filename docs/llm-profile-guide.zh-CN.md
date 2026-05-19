@@ -33,6 +33,17 @@
 “这个任务的目标是什么、由几部分构成、每部分判断条件是什么、然后怎么处理”，再用
 `scope_profile.steps` 和 `end_to_end_lineage` 校验事实。
 
+注意：`business_profile.objective.summary` 仍然是程序生成的线索，不是人工确认的最终业务
+结论。LLM 不应只复述它，而应结合：
+
+- `business_profile.sections`：任务拆成了哪些处理阶段；
+- `business_rule_candidates`：每个阶段的 WHERE/JOIN/HAVING 条件涉及哪些字段；
+- `related_metadata`：表中文名、表描述、字段中文注释；
+- `important_columns` 和 `end_to_end_lineage`：核心输出字段及来源；
+- `expression_catalog`、`filters_summary`、`diagnostics`：派生逻辑、过滤规则和风险边界；
+
+共同归纳业务目标和判断逻辑。
+
 ## 1. 从 summary 判断任务主题
 
 `summary` 是任务入口。重点读取：
