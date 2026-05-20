@@ -254,6 +254,9 @@ const state = {
     field: { x: 0, y: 0, k: 1 },
   },
   dragging: null,
+  nodeDragging: null,
+  nodeOffsets: {},
+  suppressClick: false,
 };
 
 const byId = {};
@@ -337,18 +340,34 @@ function layoutDag(nodes) {
   const sortedLevels = [...levels.keys()].sort((a, b) => a - b);
   const levelIndex = Object.fromEntries(sortedLevels.map((level, index) => [level, index]));
   const cellW = 190;
-  const cellH = 76;
+  const cellH = 104;
+  let orderById = new Map();
+  for (const level of sortedLevels) {
+    levels.get(level).sort(compareGraphNodes).forEach((node, index) => orderById.set(node.id, index));
+  }
+  const connected = new Map(nodes.map(n => [n.id, []]));
+  for (const edge of feedEdges) {
+    connected.get(edge.to)?.push(edge.from);
+    connected.get(edge.from)?.push(edge.to);
+  }
+  for (let pass = 0; pass < 6; pass += 1) {
+    for (const level of sortedLevels.slice(1)) {
+      levels.get(level).sort((a, b) => neighborAverage(a.id, connected, orderById) - neighborAverage(b.id, connected, orderById) || compareGraphNodes(a, b));
+      levels.get(level).forEach((node, index) => orderById.set(node.id, index));
+    }
+    for (const level of sortedLevels.slice(0, -1).reverse()) {
+      levels.get(level).sort((a, b) => neighborAverage(a.id, connected, orderById) - neighborAverage(b.id, connected, orderById) || compareGraphNodes(a, b));
+      levels.get(level).forEach((node, index) => orderById.set(node.id, index));
+    }
+  }
   const positions = {};
   let maxRows = 1;
   for (const level of sortedLevels) {
-    const levelNodes = levels.get(level).sort((a, b) => {
-      const aTable = a.type === "table" ? 0 : 1;
-      const bTable = b.type === "table" ? 0 : 1;
-      return aTable - bTable || String(a.name || a.label || a.id).localeCompare(String(b.name || b.label || b.id));
-    });
+    const levelNodes = levels.get(level);
     maxRows = Math.max(maxRows, levelNodes.length);
     levelNodes.forEach((node, row) => {
-      positions[node.id] = { x: 24 + levelIndex[level] * cellW, y: 32 + row * cellH };
+      const offset = state.nodeOffsets[node.id] || { x: 0, y: 0 };
+      positions[node.id] = { x: 24 + levelIndex[level] * cellW + offset.x, y: 32 + row * cellH + offset.y };
     });
   }
   return {
@@ -357,6 +376,19 @@ function layoutDag(nodes) {
     width: Math.max(700, 70 + sortedLevels.length * cellW),
     height: Math.max(360, 80 + maxRows * cellH),
   };
+}
+
+function compareGraphNodes(a, b) {
+  const aTable = a.type === "table" ? 0 : 1;
+  const bTable = b.type === "table" ? 0 : 1;
+  return aTable - bTable || String(a.name || a.label || a.id).localeCompare(String(b.name || b.label || b.id));
+}
+
+function neighborAverage(id, graph, orderById) {
+  const neighbors = graph.get(id) || [];
+  const rows = neighbors.map(n => orderById.get(n)).filter(v => v !== undefined);
+  if (!rows.length) return orderById.get(id) ?? 0;
+  return rows.reduce((sum, value) => sum + value, 0) / rows.length;
 }
 
 function viewportTransform(name) {
@@ -429,12 +461,42 @@ function setupGraphPanZoom(svgId, name) {
   }, { passive: false });
   svg.addEventListener("pointerdown", event => {
     if (event.button !== 0) return;
-    if (event.target.closest?.("[data-id]")) return;
+    const node = event.target.closest?.("[data-id]");
+    if (node && name === "scope") {
+      svg.setPointerCapture(event.pointerId);
+      const point = svgPoint(svg, event);
+      state.nodeDragging = {
+        id: node.dataset.id,
+        type: node.dataset.type,
+        pointerId: event.pointerId,
+        x: point.x,
+        y: point.y,
+        moved: false,
+      };
+      return;
+    }
+    if (node) return;
     svg.setPointerCapture(event.pointerId);
     svg.classList.add("dragging");
     state.dragging = { name, pointerId: event.pointerId, x: event.clientX, y: event.clientY };
   });
   svg.addEventListener("pointermove", event => {
+    const nodeDrag = state.nodeDragging;
+    if (nodeDrag && nodeDrag.pointerId === event.pointerId && name === "scope") {
+      const point = svgPoint(svg, event);
+      const view = state.views.scope;
+      const dx = (point.x - nodeDrag.x) / Math.max(view.k, 0.01);
+      const dy = (point.y - nodeDrag.y) / Math.max(view.k, 0.01);
+      if (Math.abs(dx) + Math.abs(dy) > 0.5) {
+        const offset = state.nodeOffsets[nodeDrag.id] || { x: 0, y: 0 };
+        state.nodeOffsets[nodeDrag.id] = { x: offset.x + dx, y: offset.y + dy };
+        nodeDrag.x = point.x;
+        nodeDrag.y = point.y;
+        nodeDrag.moved = true;
+        renderScopeGraph();
+      }
+      return;
+    }
     const drag = state.dragging;
     if (!drag || drag.name !== name || drag.pointerId !== event.pointerId) return;
     const rect = svg.getBoundingClientRect();
@@ -446,6 +508,13 @@ function setupGraphPanZoom(svgId, name) {
     applyViewport(name);
   });
   svg.addEventListener("pointerup", event => {
+    const nodeDrag = state.nodeDragging;
+    if (nodeDrag && nodeDrag.pointerId === event.pointerId) {
+      state.suppressClick = nodeDrag.moved;
+      if (!nodeDrag.moved) selectObject(nodeDrag.id, nodeDrag.type);
+      state.nodeDragging = null;
+      return;
+    }
     if (state.dragging?.pointerId === event.pointerId) {
       state.dragging = null;
       svg.classList.remove("dragging");
@@ -453,10 +522,15 @@ function setupGraphPanZoom(svgId, name) {
   });
   svg.addEventListener("pointercancel", () => {
     state.dragging = null;
+    state.nodeDragging = null;
     svg.classList.remove("dragging");
   });
   if (name === "scope") {
     svg.addEventListener("click", event => {
+      if (state.suppressClick) {
+        state.suppressClick = false;
+        return;
+      }
       const target = event.target.closest?.("[data-id]");
       if (target) selectObject(target.dataset.id, target.dataset.type);
     });
