@@ -44,6 +44,7 @@ def build_task_insight(
 
     _add_tables(insight, profile)
     scope_id_map = _add_scopes(insight, lineage, profile)
+    _add_missing_graph_tables(insight, lineage)
     _add_columns(insight, profile)
     _add_rules(insight, profile, scope_id_map)
     _add_sections(insight, profile, scope_id_map, business_doc_index)
@@ -168,6 +169,30 @@ def _add_tables(insight: dict[str, Any], profile: dict[str, Any]) -> None:
             }
 
 
+def _add_missing_graph_tables(insight: dict[str, Any], lineage: dict[str, Any]) -> None:
+    for edge in (lineage.get("scope_graph") or {}).get("edges") or []:
+        for endpoint in (edge.get("from"), edge.get("to")):
+            if not _looks_like_table(endpoint):
+                continue
+            table_id = _table_id(str(endpoint))
+            insight["objects"]["tables"].setdefault(
+                table_id,
+                {
+                    "id": table_id,
+                    "type": "table",
+                    "name": str(endpoint),
+                    "label": str(endpoint),
+                    "description": None,
+                    "layer": None,
+                    "role": "input",
+                    "used_columns": [],
+                    "column_details": [],
+                    "metadata_complete": False,
+                    "evidence": [{"source": "lineage", "path": "$.scope_graph.edges"}],
+                },
+            )
+
+
 def _add_scopes(insight: dict[str, Any], lineage: dict[str, Any], profile: dict[str, Any]) -> dict[str, str]:
     scope_id_map: dict[str, str] = {}
     steps = (profile.get("scope_profile") or {}).get("steps") or []
@@ -199,7 +224,106 @@ def _add_scopes(insight: dict[str, Any], lineage: dict[str, Any], profile: dict[
 
     for scope_key in (lineage.get("scopes") or {}).keys():
         scope_id_map.setdefault(scope_key, _scope_object_id(_display_scope_name(scope_key)))
+
+    for scope_key, scope in (lineage.get("scopes") or {}).items():
+        object_id = scope_id_map.get(scope_key)
+        if not object_id or object_id in insight["objects"]["scopes"]:
+            continue
+        physical_tables = _lineage_physical_tables(scope)
+        insight["objects"]["scopes"][object_id] = {
+            "id": object_id,
+            "type": "scope",
+            "scope_id": scope_key,
+            "name": _display_scope_name(scope_key),
+            "kind": scope.get("kind"),
+            "role": scope.get("role"),
+            "operations": _lineage_operations(scope),
+            "business_action": _lineage_business_action(scope, physical_tables),
+            "summary": _lineage_business_action(scope, physical_tables),
+            "direct_inputs": [_input_object_id(item, scope_id_map) for item in scope.get("depends_on") or []],
+            "physical_source_tables": [_table_id(item) for item in physical_tables],
+            "output_column_count": len(scope.get("columns") or []),
+            "logic": _lineage_logic(scope),
+            "profiled": False,
+            "evidence": [{"source": "lineage", "path": f"$.scopes['{scope_key}']"}],
+        }
     return scope_id_map
+
+
+def _lineage_operations(scope: dict[str, Any]) -> list[str]:
+    operations: list[str] = []
+    kind = scope.get("kind")
+    role = scope.get("role")
+    if kind == "union_branch":
+        operations.append("union_branch")
+    if role and role not in operations:
+        operations.append(str(role))
+    if scope.get("filters"):
+        operations.append("filter")
+    transforms = {str(column.get("transform") or "").upper() for column in scope.get("columns") or []}
+    if "CONDITIONAL" in transforms:
+        operations.append("case_when")
+    if "AGGREGATE" in transforms:
+        operations.append("aggregate")
+    if "WINDOW" in transforms:
+        operations.append("window")
+    return operations
+
+
+def _lineage_physical_tables(scope: dict[str, Any]) -> list[str]:
+    tables: list[str] = []
+    for item in scope.get("depends_on") or []:
+        if _looks_like_table(item) and item not in tables:
+            tables.append(item)
+    for column in scope.get("columns") or []:
+        for source in column.get("sources") or []:
+            source_scope = source.get("scope")
+            if _looks_like_table(source_scope) and source_scope not in tables:
+                tables.append(source_scope)
+    return tables
+
+
+def _lineage_business_action(scope: dict[str, Any], physical_tables: list[str]) -> str:
+    parts: list[str] = []
+    if physical_tables:
+        parts.append("读取 " + ", ".join(physical_tables[:3]) + (" 等物理表" if len(physical_tables) > 3 else ""))
+    if scope.get("kind") == "union_branch":
+        branch_index = scope.get("branch_index")
+        if branch_index is not None:
+            parts.append(f"作为 UNION 第 {int(branch_index) + 1} 个分支")
+        else:
+            parts.append("作为 UNION 分支")
+    if scope.get("filters"):
+        parts.append("按分支条件筛选记录")
+    return "；".join(parts) or "加工中间结果"
+
+
+def _lineage_logic(scope: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "joins": [],
+        "filters": copy.deepcopy(scope.get("filters") or []),
+        "aggregations": [],
+        "window_functions": [],
+        "case_when": _lineage_case_when(scope),
+        "key_renames": [],
+        "distinct": False,
+        "union_branches": 0,
+        "lateral_views": [],
+    }
+
+
+def _lineage_case_when(scope: dict[str, Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for column in scope.get("columns") or []:
+        if column.get("transform") == "CONDITIONAL":
+            items.append(
+                {
+                    "column": column.get("name"),
+                    "summary": "CASE expression",
+                    "branch_count": len(column.get("case_branches") or []),
+                }
+            )
+    return items
 
 
 def _business_action(step: dict[str, Any]) -> str:
@@ -563,7 +687,7 @@ def _display_scope_name(scope_id: str) -> str:
 
 
 def _scope_object_id(name: str) -> str:
-    return f"scope:{_safe_id(_display_scope_name(name))}"
+    return f"scope:{_safe_id(name)}"
 
 
 def _column_id(name: str) -> str:
@@ -588,6 +712,17 @@ def _safe_id(value: Any) -> str:
     text = re.sub(r"\s+", "_", text)
     text = re.sub(r"[^0-9A-Za-z_\-:.]+", "_", text)
     return text.strip("_") or "unknown"
+
+
+def _looks_like_table(value: Any) -> bool:
+    if not value:
+        return False
+    text = str(value)
+    if text == "CONSTANT":
+        return False
+    if text.startswith(("cte:", "subq:", "union:", "ROOT", "scope:")):
+        return False
+    return "." in text
 
 
 def _add_link(insight: dict[str, Any], from_id: str, to_id: str, link_type: str) -> None:

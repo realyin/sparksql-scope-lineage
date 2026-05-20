@@ -130,3 +130,31 @@ def test_build_task_insight_accepts_full_diagnostics_warnings():
     diagnostic = next(iter(insight["objects"]["diagnostics"].values()))
     assert diagnostic["code"] == "filter_in_join_on_clause"
     assert diagnostic["scope_ids"] == ["scope:ranked"]
+
+
+def test_task_insight_keeps_union_branch_nodes_for_scope_graph():
+    sql = """
+    INSERT OVERWRITE TABLE mart.touch_union
+    SELECT id, event_time FROM ods.online_touch
+    UNION ALL
+    SELECT id, event_time FROM ods.hotline_touch
+    """
+    schema = {
+        "ods.online_touch": [{"name": "id"}, {"name": "event_time"}],
+        "ods.hotline_touch": [{"name": "id"}, {"name": "event_time"}],
+        "mart.touch_union": [{"name": "id"}, {"name": "event_time"}],
+    }
+    result = parse_scope_lineage(sql, "touch_union_task", schema=schema)
+
+    insight = build_task_insight(lineage=to_dict(result), profile=to_profile_dict(result))
+
+    assert "scope:main:b01" in insight["objects"]["scopes"]
+    assert "scope:main:b02" in insight["objects"]["scopes"]
+    assert any(
+        link == {"from": "table:ods.online_touch", "to": "scope:main:b01", "type": "feeds"}
+        for link in insight["links"]
+    )
+    assert any(
+        link == {"from": "scope:main:b01", "to": "scope:main", "type": "feeds"}
+        for link in insight["links"]
+    )
