@@ -318,6 +318,7 @@ function graphNodes() {
 
 function layoutDag(nodes) {
   const ids = new Set(nodes.map(n => n.id));
+  const sourceOrder = Object.fromEntries(nodes.map((node, index) => [node.id, index]));
   const rank = Object.fromEntries(nodes.map(n => [n.id, 0]));
   const feedEdges = links.filter(l => l.type === "feeds" && ids.has(l.from) && ids.has(l.to));
   for (let i = 0; i < nodes.length + 1; i += 1) {
@@ -343,20 +344,20 @@ function layoutDag(nodes) {
   const cellH = 104;
   let orderById = new Map();
   for (const level of sortedLevels) {
-    levels.get(level).sort(compareGraphNodes).forEach((node, index) => orderById.set(node.id, index));
+    levels.get(level).sort((a, b) => compareGraphNodes(a, b, sourceOrder)).forEach((node, index) => orderById.set(node.id, index));
   }
   const connected = new Map(nodes.map(n => [n.id, []]));
   for (const edge of feedEdges) {
     connected.get(edge.to)?.push(edge.from);
     connected.get(edge.from)?.push(edge.to);
   }
-  for (let pass = 0; pass < 6; pass += 1) {
+  for (let pass = 0; pass < 3; pass += 1) {
     for (const level of sortedLevels.slice(1)) {
-      levels.get(level).sort((a, b) => neighborAverage(a.id, connected, orderById) - neighborAverage(b.id, connected, orderById) || compareGraphNodes(a, b));
+      levels.get(level).sort((a, b) => weightedOrder(a.id, connected, orderById, sourceOrder) - weightedOrder(b.id, connected, orderById, sourceOrder) || compareGraphNodes(a, b, sourceOrder));
       levels.get(level).forEach((node, index) => orderById.set(node.id, index));
     }
     for (const level of sortedLevels.slice(0, -1).reverse()) {
-      levels.get(level).sort((a, b) => neighborAverage(a.id, connected, orderById) - neighborAverage(b.id, connected, orderById) || compareGraphNodes(a, b));
+      levels.get(level).sort((a, b) => weightedOrder(a.id, connected, orderById, sourceOrder) - weightedOrder(b.id, connected, orderById, sourceOrder) || compareGraphNodes(a, b, sourceOrder));
       levels.get(level).forEach((node, index) => orderById.set(node.id, index));
     }
   }
@@ -378,10 +379,10 @@ function layoutDag(nodes) {
   };
 }
 
-function compareGraphNodes(a, b) {
+function compareGraphNodes(a, b, sourceOrder = {}) {
   const aTable = a.type === "table" ? 0 : 1;
   const bTable = b.type === "table" ? 0 : 1;
-  return aTable - bTable || String(a.name || a.label || a.id).localeCompare(String(b.name || b.label || b.id));
+  return aTable - bTable || (sourceOrder[a.id] ?? 0) - (sourceOrder[b.id] ?? 0) || String(a.name || a.label || a.id).localeCompare(String(b.name || b.label || b.id));
 }
 
 function neighborAverage(id, graph, orderById) {
@@ -389,6 +390,12 @@ function neighborAverage(id, graph, orderById) {
   const rows = neighbors.map(n => orderById.get(n)).filter(v => v !== undefined);
   if (!rows.length) return orderById.get(id) ?? 0;
   return rows.reduce((sum, value) => sum + value, 0) / rows.length;
+}
+
+function weightedOrder(id, graph, orderById, sourceOrder) {
+  const neighbor = neighborAverage(id, graph, orderById);
+  const original = sourceOrder[id] ?? orderById.get(id) ?? 0;
+  return neighbor * 0.45 + original * 0.55;
 }
 
 function viewportTransform(name) {
@@ -544,17 +551,17 @@ function renderScopeGraph() {
   const visible = nodes.filter(n => !q || JSON.stringify(n).toLowerCase().includes(q));
   const { positions, cellW, width, height } = layoutDag(visible);
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  const highlightIds = highlightSet();
+  const highlight = scopeHighlightInfo();
   let body = "";
   for (const link of links.filter(l => l.type === "feeds")) {
     const a = positions[link.from], b = positions[link.to];
     if (!a || !b) continue;
-    const h = highlightIds.has(link.from) || highlightIds.has(link.to) ? " highlight" : "";
+    const h = highlight.edges.has(`${link.from}->${link.to}`) ? " highlight" : "";
     body += `<path class="edge${h}" d="M${a.x+145},${a.y+24} C${a.x+cellW/2},${a.y+24} ${b.x-cellW/2},${b.y+24} ${b.x},${b.y+24}"/>`;
   }
   for (const n of visible) {
     const p = positions[n.id];
-    const cls = ["node", n.type === "table" ? "table" : "", n.kind === "root" || n.name === "ROOT" ? "scope-root" : "", n.kind === "union" ? "union" : "", state.selectedId === n.id ? "selected" : "", highlightIds.has(n.id) ? "highlight" : ""].join(" ");
+    const cls = ["node", n.type === "table" ? "table" : "", n.kind === "root" || n.name === "ROOT" ? "scope-root" : "", n.kind === "union" ? "union" : "", state.selectedId === n.id ? "selected" : "", highlight.nodes.has(n.id) ? "highlight" : ""].join(" ");
     body += `<g class="${cls}" data-id="${esc(n.id)}" data-type="${esc(n.type || "scope")}" transform="translate(${p.x},${p.y})">
       <rect width="150" height="48"></rect>
       <text x="10" y="19">${esc((n.name || n.label || n.id).slice(0, 22))}</text>
@@ -619,6 +626,24 @@ function highlightSet() {
   for (const id of item.rule_ids || []) ids.add(id);
   for (const id of item.column_ids || []) ids.add(id);
   return ids;
+}
+
+function scopeHighlightInfo() {
+  const nodes = new Set();
+  const edges = new Set();
+  if (!state.selectedId) return { nodes, edges };
+  const selected = byId[state.selectedId];
+  if (!selected || !["scope", "table"].includes(selected.type)) return { nodes, edges };
+  nodes.add(state.selectedId);
+  const incident = links.filter(link => link.type === "feeds" && (link.from === state.selectedId || link.to === state.selectedId));
+  if (incident.length <= 6) {
+    for (const link of incident) {
+      nodes.add(link.from);
+      nodes.add(link.to);
+      edges.add(`${link.from}->${link.to}`);
+    }
+  }
+  return { nodes, edges };
 }
 
 function selectObject(id, type) {
