@@ -162,3 +162,90 @@ def test_task_insight_keeps_union_branch_nodes_for_scope_graph():
         link == {"from": "scope:main:b01", "to": "scope:main", "type": "feeds"}
         for link in insight["links"]
     )
+
+
+def test_task_insight_prunes_dangling_lineage_only_scopes():
+    lineage = {
+        "task_id": "dangling_task",
+        "target_table": "mart.out",
+        "stmt_kind": "INSERT",
+        "scopes": {
+            "ROOT": {
+                "kind": "root",
+                "role": "select",
+                "depends_on": ["cte:kept"],
+                "columns": [{"name": "id", "sources": [{"scope": "cte:kept", "column": "id"}]}],
+            },
+            "cte:kept": {
+                "kind": "cte",
+                "role": "filter",
+                "depends_on": ["ods.src"],
+                "columns": [{"name": "id", "sources": [{"scope": "ods.src", "column": "id"}]}],
+            },
+            "subq:dangling": {
+                "kind": "subquery",
+                "role": "pass_through",
+                "depends_on": ["cte:date_scope"],
+                "columns": [{"name": "dt", "sources": [{"scope": "cte:date_scope", "column": "dt"}]}],
+            },
+            "cte:date_scope": {
+                "kind": "cte",
+                "role": "pass_through",
+                "depends_on": [],
+                "columns": [{"name": "dt", "sources": []}],
+            },
+        },
+        "scope_graph": {
+            "edges": [
+                {"from": "ods.src", "to": "cte:kept"},
+                {"from": "cte:kept", "to": "ROOT"},
+                {"from": "cte:date_scope", "to": "subq:dangling"},
+            ]
+        },
+    }
+    profile = {
+        "task_name": "dangling_task",
+        "target_table": "mart.out",
+        "scope_profile": {
+            "steps": [
+                {
+                    "name": "kept",
+                    "scope_id": "cte:kept",
+                    "kind": "cte",
+                    "role": "filter",
+                    "direct_inputs": ["ods.src"],
+                    "physical_source_tables": ["ods.src"],
+                    "output_columns": 1,
+                    "logic": {},
+                },
+                {
+                    "name": "ROOT",
+                    "scope_id": "ROOT",
+                    "kind": "root",
+                    "role": "select",
+                    "direct_inputs": ["cte:kept"],
+                    "physical_source_tables": ["ods.src"],
+                    "output_columns": 1,
+                    "logic": {},
+                },
+            ]
+        },
+        "end_to_end_lineage": [
+            {
+                "column": "id",
+                "transform": "DIRECT",
+                "trace_complete": True,
+                "physical_sources": [{"table": "ods.src", "column": "id"}],
+            }
+        ],
+        "related_metadata": {
+            "input_tables": {"ods.src": {"column_details": [{"name": "id"}]}},
+            "output_tables": {"mart.out": {"column_details": [{"name": "id"}]}},
+        },
+    }
+
+    insight = build_task_insight(lineage=lineage, profile=profile)
+
+    assert "scope:kept" in insight["objects"]["scopes"]
+    assert "scope:dangling" not in insight["objects"]["scopes"]
+    assert all("scope:dangling" not in (link["from"], link["to"]) for link in insight["links"])

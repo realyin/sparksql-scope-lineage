@@ -51,8 +51,9 @@ def build_task_insight(
     _add_diagnostics(insight, diagnostics_data, scope_id_map)
     _add_knowledge(insight, business_knowledge)
     _add_graph_links(insight, lineage, scope_id_map)
-    _build_capabilities(insight, business_doc, business_doc_index, business_knowledge)
     _dedupe_links(insight)
+    _prune_dangling_implementation_scopes(insight)
+    _build_capabilities(insight, business_doc, business_doc_index, business_knowledge)
     return insight
 
 
@@ -537,6 +538,34 @@ def _add_graph_links(insight: dict[str, Any], lineage: dict[str, Any], scope_id_
         for scope_id in _scopes_for_column(lineage, column.get("name"), scope_id_map):
             column.setdefault("scope_ids", []).append(scope_id)
             _add_link(insight, scope_id, column_id, "produces")
+
+
+def _prune_dangling_implementation_scopes(insight: dict[str, Any]) -> None:
+    """Hide lineage-only implementation scopes that cannot affect the task output graph."""
+
+    scopes = insight["objects"]["scopes"]
+    outgoing_feeds = {link["from"] for link in insight["links"] if link["type"] == "feeds"}
+    remove_ids = {
+        scope_id
+        for scope_id, scope in scopes.items()
+        if scope.get("profiled") is False
+        and scope_id not in outgoing_feeds
+    }
+    if not remove_ids:
+        return
+    for scope_id in remove_ids:
+        scopes.pop(scope_id, None)
+    insight["links"] = [
+        link
+        for link in insight["links"]
+        if link.get("from") not in remove_ids and link.get("to") not in remove_ids
+    ]
+    for section in insight["objects"]["sections"].values():
+        if section.get("scope_ids"):
+            section["scope_ids"] = [scope_id for scope_id in section["scope_ids"] if scope_id not in remove_ids]
+    for rule in insight["objects"]["rules"].values():
+        if rule.get("scope_ids"):
+            rule["scope_ids"] = [scope_id for scope_id in rule["scope_ids"] if scope_id not in remove_ids]
 
 
 def _scopes_for_column(lineage: dict[str, Any], column_name: str | None, scope_id_map: dict[str, str]) -> list[str]:
