@@ -318,7 +318,8 @@ scope-lineage parse \
   --schema /path/to/schema_info.csv \
   --table-metadata /path/to/tables_metadata.csv \
   --md \
-  --html
+  --html \
+  --insight
 ```
 
 参数说明：
@@ -342,10 +343,19 @@ scope-lineage parse \
   diagnostics.json
   lineage.md
   report.html
+  task_insight.json
+  task_insight.html
   views/
 ```
 
 其中 `profile.json` 就是给 LLM 读取的文件。
+
+如果已有输出目录里已经存在 `lineage.json` 和 `profile.json`，也可以直接补生成任务理解工作台：
+
+```bash
+scope-lineage insight \
+  --input /tmp/scope-output/customer_profile_task_0
+```
 
 ### 2.2 批量：解析 task_info 目录
 
@@ -367,7 +377,8 @@ python3 tools/run_scope_corpus.py \
   --schema /Users/yinguoliang/dev/sqllineageparse/task_info/test_files/schema_info.csv \
   --table-metadata /path/to/tables_metadata.csv \
   --md \
-  --html
+  --html \
+  --insight
 ```
 
 如果要跑默认 `task_info` 目录下的所有子目录：
@@ -388,7 +399,8 @@ python3 tools/run_scope_corpus.py \
   --dir 客服任务列表 \
   --out /tmp/scope-task-output \
   --schema /path/to/schema_info.csv \
-  --table-metadata /path/to/tables_metadata.csv
+  --table-metadata /path/to/tables_metadata.csv \
+  --insight
 ```
 
 批量输出结构：

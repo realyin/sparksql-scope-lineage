@@ -72,7 +72,8 @@ scope-lineage parse \
   --sql-file examples/simple_insert.sql \
   --out /tmp/scope-lineage-demo \
   --md \
-  --html
+  --html \
+  --insight
 ```
 
 如果 SQL 里有 `SELECT *`，可以提供表结构信息：
@@ -83,7 +84,15 @@ scope-lineage parse \
   --schema examples/table_cols.csv \
   --out /tmp/scope-lineage-star-demo \
   --md \
-  --html
+  --html \
+  --insight
+```
+
+如果已经有 `lineage.json` 和 `profile.json` 输出目录，可以不重跑 SQL，直接补生成任务理解工作台：
+
+```bash
+scope-lineage insight \
+  --input /tmp/scope-lineage-demo/simple_insert
 ```
 
 运行测试：
@@ -197,6 +206,8 @@ lineage.json
 profile.json
 diagnostics.json
 report.html
+task_insight.json
+task_insight.html
 lineage.md
 views/
   scope_overview.mmd
@@ -242,6 +253,11 @@ diagnostics warnings 会输出类型统计和样例。完整细节仍保留在 `
 聚焦血缘和 diagnostics。它不依赖 CDN、字体、脚本或本地旁路文件，可以直接在
 受限内网环境打开。
 
+`task_insight.json` 和 `task_insight.html` 是任务理解工作台产物。`task_insight.json`
+把 `lineage.json`、`profile.json`、`diagnostics.json` 归一化为稳定的对象和关系模型，
+包含 task、scope、字段、表、规则、业务阶段、诊断和 links。`task_insight.html`
+基于这个模型展示可联动的业务阶段、Scope DAG、规则、字段血缘和证据链。
+
 Mermaid 文件主要用于人工检查和调试。
 
 ## 基本原理
@@ -273,7 +289,8 @@ SQL
   -> 在有 schema 时展开 SELECT *
   -> 生成 scope 图和 diagnostics
   -> 派生轻量 scope profile 和端到端物理血缘
-  -> 输出 JSON / HTML / Mermaid / Markdown
+  -> 派生 task insight 对象和关系模型
+  -> 输出 JSON / HTML / Mermaid / Markdown / task_insight 工作台
   -> 审计输出一致性
 ```
 
@@ -283,6 +300,7 @@ SQL
 - [原理说明](docs/how-it-works.zh-CN.md)
 - [Schema 元数据](docs/schema-metadata.md)
 - [profile.json 生成和使用说明](docs/profile-json-generation-and-usage.zh-CN.md)
+- [任务理解工作台设计方案](docs/task-insight-workbench-design.zh-CN.md)
 - [LLM Profile 使用指南](docs/llm-profile-guide.zh-CN.md)
 - [LLM Profile Prompt 模板](docs/llm-profile-prompt.zh-CN.md)
 - [审计方法](docs/audit-methodology.md)

@@ -24,6 +24,7 @@ from lineage_parser import (  # noqa: E402
     load_schema,
     load_table_metadata,
     parse_all_scope_lineage,
+    write_task_insight_report,
     write_html_report,
     write_output,
     write_views,
@@ -35,6 +36,7 @@ def run_directory(
     output_dir: pathlib.Path,
     write_md: bool,
     write_html: bool,
+    write_insight: bool,
     schema: dict | None = None,
 ) -> tuple:
     stats = {"ok": 0, "error": 0, "empty": 0}
@@ -59,6 +61,8 @@ def run_directory(
                     write_views(result, task_out)
                 if write_html:
                     write_html_report(result, task_out)
+                if write_insight:
+                    write_task_insight_report(result, task_out)
             stats["ok"] += 1
         except Exception as e:
             stats["error"] += 1
@@ -81,6 +85,7 @@ def main():
     parser.add_argument("--out", default="/tmp/scope_v2_output", help="Output root directory")
     parser.add_argument("--md", action="store_true", help="Also generate Markdown + Mermaid views")
     parser.add_argument("--html", action="store_true", help="Also generate offline HTML reports")
+    parser.add_argument("--insight", action="store_true", help="Also generate task_insight.json/html reports")
     parser.add_argument(
         "--schema",
         help=(
@@ -110,7 +115,7 @@ def main():
         output_dir = out_root / input_dir.name
         output_dir.mkdir(parents=True, exist_ok=True)
         print(f"Processing {input_dir}...")
-        stats, errors = run_directory(input_dir, output_dir, args.md, args.html, schema=schema)
+        stats, errors = run_directory(input_dir, output_dir, args.md, args.html, args.insight, schema=schema)
         print(f"  ok={stats['ok']}, error={stats['error']}, empty={stats['empty']}")
         err_log = out_root / "errors.json"
         err_log.write_text(json.dumps(errors, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -135,7 +140,7 @@ def main():
         output_dir = out_root / d
         output_dir.mkdir(parents=True, exist_ok=True)
         print(f"Processing {d}...")
-        stats, errors = run_directory(input_dir, output_dir, args.md, args.html, schema=schema)
+        stats, errors = run_directory(input_dir, output_dir, args.md, args.html, args.insight, schema=schema)
         for k in total_stats:
             total_stats[k] += stats.get(k, 0)
         all_errors.extend(errors)

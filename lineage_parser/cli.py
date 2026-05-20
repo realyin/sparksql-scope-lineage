@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from .html_report import write_html_report
+from .insight_report import write_task_insight_report, write_task_insight_report_from_dir
 from .schema_metadata import attach_table_metadata, load_schema, load_table_metadata
 from .scope_builder import parse_all_scope_lineage
 from .scope_serializer import write_output
@@ -24,11 +25,18 @@ def main(argv: list[str] | None = None) -> int:
     parse_cmd.add_argument("--table-metadata", help="Optional CSV/JSON table-level metadata")
     parse_cmd.add_argument("--md", action="store_true", help="Also write Markdown and Mermaid views")
     parse_cmd.add_argument("--html", action="store_true", help="Also write an offline HTML report")
+    parse_cmd.add_argument("--insight", action="store_true", help="Also write task_insight.json/html workbench")
+
+    insight_cmd = subcommands.add_parser("insight", help="Render task_insight.json/html from an existing output dir")
+    insight_cmd.add_argument("--input", required=True, help="Directory containing lineage.json and profile.json")
+    insight_cmd.add_argument("--out", help="Optional HTML output path; defaults to <input>/task_insight.html")
 
     args = parser.parse_args(argv)
 
     if args.command == "parse":
         return _parse_file(args)
+    if args.command == "insight":
+        return _render_insight(args)
     parser.error(f"unknown command: {args.command}")
     return 2
 
@@ -51,8 +59,16 @@ def _parse_file(args: argparse.Namespace) -> int:
             write_views(result, out_dir)
         if args.html:
             write_html_report(result, out_dir)
+        if args.insight:
+            write_task_insight_report(result, out_dir)
 
     print(f"Parsed {len(results)} statement(s) into {out_root}")
+    return 0
+
+
+def _render_insight(args: argparse.Namespace) -> int:
+    path = write_task_insight_report_from_dir(args.input, args.out)
+    print(f"Rendered task insight report: {path}")
     return 0
 
 
