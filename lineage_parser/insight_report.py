@@ -335,7 +335,8 @@ function layoutDag(nodes) {
     levels.get(level).push(node);
   }
   const sortedLevels = [...levels.keys()].sort((a, b) => a - b);
-  const cellW = 220;
+  const levelIndex = Object.fromEntries(sortedLevels.map((level, index) => [level, index]));
+  const cellW = 190;
   const cellH = 76;
   const positions = {};
   let maxRows = 1;
@@ -347,13 +348,13 @@ function layoutDag(nodes) {
     });
     maxRows = Math.max(maxRows, levelNodes.length);
     levelNodes.forEach((node, row) => {
-      positions[node.id] = { x: 24 + level * cellW, y: 32 + row * cellH };
+      positions[node.id] = { x: 24 + levelIndex[level] * cellW, y: 32 + row * cellH };
     });
   }
   return {
     positions,
     cellW,
-    width: Math.max(700, 70 + (Math.max(...sortedLevels, 0) + 1) * cellW),
+    width: Math.max(700, 70 + sortedLevels.length * cellW),
     height: Math.max(360, 80 + maxRows * cellH),
   };
 }
@@ -395,7 +396,28 @@ function zoomGraph(name, factor, centerEvent) {
 }
 
 function resetGraphView(name) {
+  if (name === "scope") {
+    fitGraphView(name);
+    return;
+  }
   state.views[name] = { x: 0, y: 0, k: 1 };
+  applyViewport(name);
+}
+
+function fitGraphView(name) {
+  const svg = document.getElementById(name === "scope" ? "scopeSvg" : "fieldSvg");
+  const box = svg.viewBox.baseVal;
+  const rect = svg.getBoundingClientRect();
+  const sx = rect.width / Math.max(box.width, 1);
+  const sy = rect.height / Math.max(box.height, 1);
+  const k = clampZoom(Math.min(sx, sy) * 0.94);
+  const viewportW = Math.max(rect.width, 1) / k;
+  const viewportH = Math.max(rect.height, 1) / k;
+  state.views[name] = {
+    x: Math.max(0, (viewportW - box.width) / 2),
+    y: Math.max(0, (viewportH - box.height) / 2),
+    k,
+  };
   applyViewport(name);
 }
 
@@ -466,6 +488,10 @@ function renderScopeGraph() {
     </g>`;
   }
   svg.innerHTML = `<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#9aa8bb"></path></marker></defs><g id="scopeViewport" transform="${viewportTransform("scope")}">${body}</g>`;
+  if (!state.views.scope.fitted) {
+    fitGraphView("scope");
+    state.views.scope.fitted = true;
+  }
 }
 
 function renderColumns() {
