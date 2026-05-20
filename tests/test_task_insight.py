@@ -58,6 +58,8 @@ def test_build_task_insight_indexes_scopes_rules_columns_and_links():
     assert insight["schema_version"] == "1.0"
     assert insight["task"]["task_name"] == "customer_touch_task"
     assert insight["task"]["target_table"] == "mart.customer_touch"
+    assert insight["task"]["visible_scope_count"] == len(insight["objects"]["scopes"])
+    assert insight["task"]["dag_node_count"] >= insight["task"]["visible_scope_count"]
     assert insight["capabilities"]["has_rule_index"] is True
     assert "scope:base" in insight["objects"]["scopes"]
     assert "scope:ranked" in insight["objects"]["scopes"]
@@ -87,6 +89,8 @@ def test_render_task_insight_html_contains_payload_and_workbench_sections():
     assert "业务阶段" in html
     assert "Scope DAG" in html
     assert "字段血缘" in html
+    assert "完整scope" in html
+    assert "DAG节点" in html
     assert 'id="zoomScopeIn"' in html
     assert 'id="resetFieldView"' in html
     assert "layoutDag" in html

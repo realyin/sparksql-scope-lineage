@@ -280,7 +280,9 @@ function renderSummary() {
   const chips = [
     ["输入表", task.input_table_count],
     ["输出字段", task.output_column_count],
-    ["scope", task.scope_count],
+    ["完整scope", task.lineage_scope_count || task.scope_count],
+    ["展示scope", task.visible_scope_count],
+    ["DAG节点", task.dag_node_count],
     ["完整追溯", task.trace_complete_count],
     ["不完整", task.trace_incomplete_count],
     ["warning", task.warning_count],

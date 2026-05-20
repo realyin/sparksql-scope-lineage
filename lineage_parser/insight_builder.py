@@ -53,6 +53,7 @@ def build_task_insight(
     _add_graph_links(insight, lineage, scope_id_map)
     _dedupe_links(insight)
     _prune_dangling_implementation_scopes(insight)
+    _finalize_task_counts(insight)
     _build_capabilities(insight, business_doc, business_doc_index, business_knowledge)
     return insight
 
@@ -78,6 +79,7 @@ def _build_task(
         "input_table_count": summary.get("input_table_count") or len(profile.get("source_tables") or []),
         "output_column_count": summary.get("output_column_count") or len(end_to_end),
         "scope_count": (diagnostics.get("stats") or {}).get("scope_count"),
+        "lineage_scope_count": (diagnostics.get("stats") or {}).get("scope_count"),
         "trace_complete_count": complete_count,
         "trace_incomplete_count": incomplete_count,
         "warning_count": diagnostics.get("warning_count", 0),
@@ -567,6 +569,15 @@ def _prune_dangling_implementation_scopes(insight: dict[str, Any]) -> None:
     for rule in insight["objects"]["rules"].values():
         if rule.get("scope_ids"):
             rule["scope_ids"] = [scope_id for scope_id in rule["scope_ids"] if scope_id not in remove_ids]
+
+
+def _finalize_task_counts(insight: dict[str, Any]) -> None:
+    visible_scope_count = len(insight["objects"]["scopes"])
+    input_table_count = sum(
+        1 for table in insight["objects"]["tables"].values() if table.get("role") == "input"
+    )
+    insight["task"]["visible_scope_count"] = visible_scope_count
+    insight["task"]["dag_node_count"] = visible_scope_count + input_table_count
 
 
 def _scopes_for_column(lineage: dict[str, Any], column_name: str | None, scope_id_map: dict[str, str]) -> list[str]:
