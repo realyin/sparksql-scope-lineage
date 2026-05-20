@@ -87,6 +87,9 @@ def test_render_task_insight_html_contains_payload_and_workbench_sections():
     assert "业务阶段" in html
     assert "Scope DAG" in html
     assert "字段血缘" in html
+    assert 'id="zoomScopeIn"' in html
+    assert 'id="resetFieldView"' in html
+    assert "setupGraphPanZoom" in html
     assert "customer_touch_task" in html
 
 

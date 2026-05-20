@@ -117,6 +117,9 @@ def render_task_insight_html(insight: dict[str, Any]) -> str:
         <h2>Scope DAG</h2>
         <div class="toolbar">
           <input id="scopeSearch" placeholder="搜索 scope">
+          <button id="zoomScopeOut" type="button" title="缩小 Scope 图">-</button>
+          <button id="zoomScopeIn" type="button" title="放大 Scope 图">+</button>
+          <button id="resetScopeView" type="button" title="重置 Scope 图视图">重置</button>
           <button id="clearSelection" type="button">清除选择</button>
         </div>
       </div>
@@ -136,6 +139,9 @@ def render_task_insight_html(insight: dict[str, Any]) -> str:
             <option value="COMPLETE">完整追溯</option>
             <option value="INCOMPLETE">追溯不完整</option>
           </select>
+          <button id="zoomFieldOut" type="button" title="缩小字段血缘图">-</button>
+          <button id="zoomFieldIn" type="button" title="放大字段血缘图">+</button>
+          <button id="resetFieldView" type="button" title="重置字段血缘图视图">重置</button>
         </div>
       </div>
       <div class="field-grid">
@@ -200,14 +206,16 @@ h3 { font-size: 14px; margin: 12px 0 6px; }
 .toolbar { display: flex; align-items: center; gap: 8px; }
 input, select, button { height: 30px; border: 1px solid #cfd6e0; border-radius: 6px; background: #fff; color: var(--text); font-size: 13px; padding: 0 8px; }
 button { cursor: pointer; font-weight: 650; }
+button:active { transform: translateY(1px); }
 .list { height: calc(100% - 53px); overflow: auto; padding: 10px; }
 .section-card, .rule-card { border: 1px solid var(--line); border-radius: 7px; padding: 10px; margin-bottom: 9px; cursor: pointer; background: #fff; }
 .section-card:hover, .rule-card:hover, tr:hover { border-color: #9cc7ff; background: #f7fbff; }
 .section-card.selected, .rule-card.selected { border-color: var(--blue); background: #eef6ff; }
 .tag-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
 .tag { font-size: 11px; padding: 2px 6px; border-radius: 999px; color: #344054; background: #f2f4f7; }
-#scopeSvg { width: 100%; height: calc(100% - 53px); display: block; background: #fff; }
-#fieldSvg { width: 100%; min-height: 360px; display: block; background: #fff; border-left: 1px solid var(--line); }
+#scopeSvg { width: 100%; height: calc(100% - 53px); display: block; background: #fff; cursor: grab; touch-action: none; }
+#fieldSvg { width: 100%; min-height: 360px; display: block; background: #fff; border-left: 1px solid var(--line); cursor: grab; touch-action: none; }
+#scopeSvg.dragging, #fieldSvg.dragging { cursor: grabbing; }
 .node rect { fill: #fff; stroke: #9aa8bb; stroke-width: 1.2; rx: 7; }
 .node.scope-root rect { fill: #111827; stroke: #111827; }
 .node.scope-root text { fill: #fff; }
@@ -237,7 +245,16 @@ _JS = r"""
 const insight = JSON.parse(document.getElementById("task-insight-data").textContent);
 const objects = insight.objects || {};
 const links = insight.links || [];
-const state = { selectedId: null, selectedType: null, selectedColumn: null };
+const state = {
+  selectedId: null,
+  selectedType: null,
+  selectedColumn: null,
+  views: {
+    scope: { x: 0, y: 0, k: 1 },
+    field: { x: 0, y: 0, k: 1 },
+  },
+  dragging: null,
+};
 
 const byId = {};
 for (const group of Object.values(objects)) {
@@ -296,6 +313,82 @@ function graphNodes() {
   return scopes.concat(tables);
 }
 
+function viewportTransform(name) {
+  const v = state.views[name];
+  return `translate(${v.x} ${v.y}) scale(${v.k})`;
+}
+
+function applyViewport(name) {
+  const group = document.getElementById(`${name}Viewport`);
+  if (group) group.setAttribute("transform", viewportTransform(name));
+}
+
+function clampZoom(value) {
+  return Math.max(0.25, Math.min(4, value));
+}
+
+function svgPoint(svg, event) {
+  const rect = svg.getBoundingClientRect();
+  const box = svg.viewBox.baseVal;
+  return {
+    x: box.x + ((event.clientX - rect.left) / Math.max(rect.width, 1)) * box.width,
+    y: box.y + ((event.clientY - rect.top) / Math.max(rect.height, 1)) * box.height,
+  };
+}
+
+function zoomGraph(name, factor, centerEvent) {
+  const svg = document.getElementById(name === "scope" ? "scopeSvg" : "fieldSvg");
+  const view = state.views[name];
+  const oldK = view.k;
+  const newK = clampZoom(oldK * factor);
+  const box = svg.viewBox.baseVal;
+  const point = centerEvent ? svgPoint(svg, centerEvent) : { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  view.x = point.x - ((point.x - view.x) / oldK) * newK;
+  view.y = point.y - ((point.y - view.y) / oldK) * newK;
+  view.k = newK;
+  applyViewport(name);
+}
+
+function resetGraphView(name) {
+  state.views[name] = { x: 0, y: 0, k: 1 };
+  applyViewport(name);
+}
+
+function setupGraphPanZoom(svgId, name) {
+  const svg = document.getElementById(svgId);
+  svg.addEventListener("wheel", event => {
+    event.preventDefault();
+    zoomGraph(name, event.deltaY < 0 ? 1.15 : 1 / 1.15, event);
+  }, { passive: false });
+  svg.addEventListener("pointerdown", event => {
+    if (event.button !== 0) return;
+    svg.setPointerCapture(event.pointerId);
+    svg.classList.add("dragging");
+    state.dragging = { name, pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+  });
+  svg.addEventListener("pointermove", event => {
+    const drag = state.dragging;
+    if (!drag || drag.name !== name || drag.pointerId !== event.pointerId) return;
+    const rect = svg.getBoundingClientRect();
+    const box = svg.viewBox.baseVal;
+    state.views[name].x += ((event.clientX - drag.x) / Math.max(rect.width, 1)) * box.width;
+    state.views[name].y += ((event.clientY - drag.y) / Math.max(rect.height, 1)) * box.height;
+    drag.x = event.clientX;
+    drag.y = event.clientY;
+    applyViewport(name);
+  });
+  svg.addEventListener("pointerup", event => {
+    if (state.dragging?.pointerId === event.pointerId) {
+      state.dragging = null;
+      svg.classList.remove("dragging");
+    }
+  });
+  svg.addEventListener("pointercancel", () => {
+    state.dragging = null;
+    svg.classList.remove("dragging");
+  });
+}
+
 function renderScopeGraph() {
   const svg = document.getElementById("scopeSvg");
   const nodes = graphNodes();
@@ -312,23 +405,23 @@ function renderScopeGraph() {
   const height = Math.max(360, 80 + Math.ceil(visible.length / cols) * cellH);
   svg.setAttribute("viewBox", `0 0 ${w} ${height}`);
   const highlightIds = highlightSet();
-  let html = `<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#9aa8bb"></path></marker></defs>`;
+  let body = "";
   for (const link of links.filter(l => l.type === "feeds")) {
     const a = positions[link.from], b = positions[link.to];
     if (!a || !b) continue;
     const h = highlightIds.has(link.from) || highlightIds.has(link.to) ? " highlight" : "";
-    html += `<path class="edge${h}" d="M${a.x+145},${a.y+24} C${a.x+cellW/2},${a.y+24} ${b.x-cellW/2},${b.y+24} ${b.x},${b.y+24}"/>`;
+    body += `<path class="edge${h}" d="M${a.x+145},${a.y+24} C${a.x+cellW/2},${a.y+24} ${b.x-cellW/2},${b.y+24} ${b.x},${b.y+24}"/>`;
   }
   for (const n of visible) {
     const p = positions[n.id];
     const cls = ["node", n.type === "table" ? "table" : "", n.kind === "root" || n.name === "ROOT" ? "scope-root" : "", n.kind === "union" ? "union" : "", state.selectedId === n.id ? "selected" : "", highlightIds.has(n.id) ? "highlight" : ""].join(" ");
-    html += `<g class="${cls}" data-id="${esc(n.id)}" data-type="${esc(n.type || "scope")}" transform="translate(${p.x},${p.y})">
+    body += `<g class="${cls}" data-id="${esc(n.id)}" data-type="${esc(n.type || "scope")}" transform="translate(${p.x},${p.y})">
       <rect width="150" height="48"></rect>
       <text x="10" y="19">${esc((n.name || n.label || n.id).slice(0, 22))}</text>
       <text x="10" y="36">${esc(n.kind || n.role || n.type || "")}</text>
     </g>`;
   }
-  svg.innerHTML = html;
+  svg.innerHTML = `<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#9aa8bb"></path></marker></defs><g id="scopeViewport" transform="${viewportTransform("scope")}">${body}</g>`;
   svg.querySelectorAll("[data-id]").forEach(el => el.addEventListener("click", () => selectObject(el.dataset.id, el.dataset.type)));
 }
 
@@ -356,21 +449,21 @@ function renderFieldGraph() {
   const svg = document.getElementById("fieldSvg");
   const col = byId[state.selectedColumn || state.selectedId];
   if (!col || col.type !== "output_column") {
-    svg.innerHTML = `<text x="18" y="32" fill="#667085">选择 ROOT 输出字段查看字段血缘</text>`;
+    svg.setAttribute("viewBox", "0 0 480 260");
+    svg.innerHTML = `<g id="fieldViewport" transform="${viewportTransform("field")}"><text x="18" y="32" fill="#667085">选择 ROOT 输出字段查看字段血缘</text></g>`;
     return;
   }
   const sources = (col.physical_sources || []).slice(0, 8);
   const width = Math.max(svg.clientWidth || 480, 480);
   const height = Math.max(260, 80 + sources.length * 52);
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  let html = `<defs><marker id="fieldArrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#9aa8bb"></path></marker></defs>`;
-  html += `<g class="node selected" transform="translate(${width-190},${Math.max(24, height/2-24)})"><rect width="165" height="48"></rect><text x="10" y="20">${esc(col.name)}</text><text x="10" y="37">${esc(col.label || col.transform || "")}</text></g>`;
+  let body = `<g class="node selected" transform="translate(${width-190},${Math.max(24, height/2-24)})"><rect width="165" height="48"></rect><text x="10" y="20">${esc(col.name)}</text><text x="10" y="37">${esc(col.label || col.transform || "")}</text></g>`;
   sources.forEach((s, i) => {
     const y = 24 + i * 52;
-    html += `<g class="node table" transform="translate(18,${y})"><rect width="210" height="42"></rect><text x="9" y="18">${esc((s.table || "").slice(0, 30))}</text><text x="9" y="34">${esc(s.column || "")} · ${esc(s.transform || "")}</text></g>`;
-    html += `<path class="edge" marker-end="url(#fieldArrow)" d="M228,${y+21} C${width/2},${y+21} ${width/2},${height/2} ${width-190},${height/2}"/>`;
+    body += `<g class="node table" transform="translate(18,${y})"><rect width="210" height="42"></rect><text x="9" y="18">${esc((s.table || "").slice(0, 30))}</text><text x="9" y="34">${esc(s.column || "")} · ${esc(s.transform || "")}</text></g>`;
+    body += `<path class="edge" marker-end="url(#fieldArrow)" d="M228,${y+21} C${width/2},${y+21} ${width/2},${height/2} ${width-190},${height/2}"/>`;
   });
-  svg.innerHTML = html;
+  svg.innerHTML = `<defs><marker id="fieldArrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#9aa8bb"></path></marker></defs><g id="fieldViewport" transform="${viewportTransform("field")}">${body}</g>`;
 }
 
 function highlightSet() {
@@ -435,6 +528,14 @@ document.getElementById("scopeSearch").addEventListener("input", renderScopeGrap
 document.getElementById("columnSearch").addEventListener("input", renderColumns);
 document.getElementById("traceFilter").addEventListener("change", renderColumns);
 document.getElementById("clearSelection").addEventListener("click", () => selectObject(null, null));
+document.getElementById("zoomScopeIn").addEventListener("click", () => zoomGraph("scope", 1.2));
+document.getElementById("zoomScopeOut").addEventListener("click", () => zoomGraph("scope", 1 / 1.2));
+document.getElementById("resetScopeView").addEventListener("click", () => resetGraphView("scope"));
+document.getElementById("zoomFieldIn").addEventListener("click", () => zoomGraph("field", 1.2));
+document.getElementById("zoomFieldOut").addEventListener("click", () => zoomGraph("field", 1 / 1.2));
+document.getElementById("resetFieldView").addEventListener("click", () => resetGraphView("field"));
+setupGraphPanZoom("scopeSvg", "scope");
+setupGraphPanZoom("fieldSvg", "field");
 
 renderSummary();
 renderSections();
