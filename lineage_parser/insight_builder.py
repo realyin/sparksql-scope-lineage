@@ -214,6 +214,7 @@ def _add_scopes(insight: dict[str, Any], lineage: dict[str, Any], profile: dict[
             "business_action": _business_action(step),
             "summary": step.get("business_summary"),
             "direct_inputs": [_input_object_id(item, scope_id_map) for item in step.get("direct_inputs") or []],
+            "direct_source_tables": [_table_id(item) for item in step.get("direct_source_tables") or []],
             "physical_source_tables": [_table_id(item) for item in step.get("physical_source_tables") or []],
             "output_column_count": step.get("output_columns"),
             "logic": copy.deepcopy(step.get("logic") or {}),

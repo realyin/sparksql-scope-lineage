@@ -77,6 +77,7 @@ def _scope_step(
     scope_data: ScopeData,
 ) -> dict[str, Any]:
     operations = _operations(scope_data)
+    direct_tables = _direct_source_tables(scope_data)
     physical_tables = _physical_source_tables(result, scope_id)
     return {
         "scope_id": scope_id,
@@ -84,8 +85,9 @@ def _scope_step(
         "kind": scope_data.kind,
         "role": _profile_role(scope_data),
         "operations": operations,
-        "business_summary": _business_summary(scope_data, operations, physical_tables),
+        "business_summary": _business_summary(scope_data, operations, direct_tables, physical_tables),
         "direct_inputs": list(scope_data.depends_on),
+        "direct_source_tables": direct_tables,
         "physical_source_tables": physical_tables,
         "output_columns": len(scope_data.columns),
         "logic": {
@@ -166,15 +168,16 @@ def _operations(scope_data: ScopeData) -> list[str]:
 def _business_summary(
     scope_data: ScopeData,
     operations: list[str],
+    direct_tables: list[str],
     physical_tables: list[str],
 ) -> str:
     parts: list[str] = []
-    if physical_tables:
-        shown = ", ".join(physical_tables[:3])
-        suffix = f" 等{len(physical_tables)}张物理表" if len(physical_tables) > 3 else ""
+    if direct_tables:
+        shown = ", ".join(direct_tables[:3])
+        suffix = f" 等{len(direct_tables)}张物理表" if len(direct_tables) > 3 else ""
         parts.append(f"读取 {shown}{suffix}")
     elif scope_data.depends_on:
-        parts.append(f"读取 {', '.join(scope_data.depends_on[:3])}")
+        parts.append(f"基于 {', '.join(scope_data.depends_on[:3])}")
 
     if "union" in operations:
         branch_count = len(scope_data.branches or [])
@@ -196,6 +199,12 @@ def _business_summary(
         parts.append("展开数组或复杂类型")
     if "distinct" in operations:
         parts.append("去重")
+
+    indirect_tables = [table for table in physical_tables if table not in set(direct_tables)]
+    if indirect_tables:
+        shown = ", ".join(indirect_tables[:3])
+        suffix = f" 等{len(indirect_tables)}张物理表" if len(indirect_tables) > 3 else ""
+        parts.append(f"上游可追溯至 {shown}{suffix}")
 
     if not parts:
         parts.append("传递并整理上游字段")
@@ -260,6 +269,15 @@ def _physical_source_tables(result: ScopeLineageResult, scope_id: str) -> list[s
     tables = _collect_physical_sources(result, scope_id, set())
     non_physical = {"UNKNOWN", CONSTANT_SCOPE_ID, SYSTEM_SCOPE_ID}
     return sorted(t for t in tables if t not in non_physical)
+
+
+def _direct_source_tables(scope_data: ScopeData) -> list[str]:
+    non_physical = {"UNKNOWN", CONSTANT_SCOPE_ID, SYSTEM_SCOPE_ID}
+    return sorted(
+        dep
+        for dep in scope_data.depends_on
+        if dep not in non_physical and not dep.startswith(("cte:", "subq:", "union:")) and "." in dep
+    )
 
 
 def _collect_physical_sources(
