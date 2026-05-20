@@ -82,6 +82,60 @@ def test_cli_parse_writes_outputs(tmp_path):
     assert (out_dir / "demo" / "report.html").exists()
 
 
+def test_cli_parse_writes_task_insight_when_requested(tmp_path):
+    sql_path = tmp_path / "demo.sql"
+    sql_path.write_text(
+        "INSERT OVERWRITE TABLE mart.user_snapshot "
+        "SELECT id FROM ods.users WHERE dt = '20260515'",
+        encoding="utf-8",
+    )
+    schema_path = tmp_path / "table_cols.csv"
+    schema_path.write_text(
+        "table_name,column_name,type,comment\n"
+        "ods.users,id,bigint,用户ID\n"
+        "ods.users,dt,string,日期分区\n"
+        "mart.user_snapshot,id,bigint,用户ID\n",
+        encoding="utf-8",
+    )
+    out_dir = tmp_path / "out"
+
+    code = main([
+        "parse",
+        "--sql-file",
+        str(sql_path),
+        "--schema",
+        str(schema_path),
+        "--out",
+        str(out_dir),
+        "--insight",
+    ])
+
+    assert code == 0
+    task_dir = out_dir / "demo"
+    insight = json.loads((task_dir / "task_insight.json").read_text(encoding="utf-8"))
+    assert insight["task"]["target_table"] == "mart.user_snapshot"
+    assert "scope:ROOT" in insight["objects"]["scopes"]
+    assert "column:id" in insight["objects"]["columns"]
+    assert (task_dir / "task_insight.html").exists()
+
+
+def test_cli_insight_renders_from_existing_output_dir(tmp_path):
+    sql_path = tmp_path / "demo.sql"
+    sql_path.write_text(
+        "INSERT OVERWRITE TABLE mart.user_snapshot SELECT id FROM ods.users",
+        encoding="utf-8",
+    )
+    out_dir = tmp_path / "out"
+    assert main(["parse", "--sql-file", str(sql_path), "--out", str(out_dir)]) == 0
+
+    task_dir = out_dir / "demo"
+    assert main(["insight", "--input", str(task_dir)]) == 0
+
+    insight = json.loads((task_dir / "task_insight.json").read_text(encoding="utf-8"))
+    assert insight["task"]["target_table"] == "mart.user_snapshot"
+    assert (task_dir / "task_insight.html").exists()
+
+
 def test_schema_csv_accepts_column_type_and_column_comment(tmp_path):
     schema_path = tmp_path / "schema_info.csv"
     schema_path.write_text(

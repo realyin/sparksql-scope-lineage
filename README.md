@@ -76,7 +76,8 @@ scope-lineage parse \
   --sql-file examples/simple_insert.sql \
   --out /tmp/scope-lineage-demo \
   --md \
-  --html
+  --html \
+  --insight
 ```
 
 Parse SQL with schema metadata so `SELECT *` can be expanded:
@@ -87,7 +88,16 @@ scope-lineage parse \
   --schema examples/table_cols.csv \
   --out /tmp/scope-lineage-star-demo \
   --md \
-  --html
+  --html \
+  --insight
+```
+
+If an output directory already contains `lineage.json` and `profile.json`, you
+can render the task-insight workbench without re-parsing SQL:
+
+```bash
+scope-lineage insight \
+  --input /tmp/scope-lineage-demo/simple_insert
 ```
 
 Run the tests:
@@ -202,6 +212,8 @@ lineage.json
 profile.json
 diagnostics.json
 report.html
+task_insight.json
+task_insight.html
 lineage.md
 views/
   scope_overview.mmd
@@ -259,6 +271,13 @@ column table, focused field lineage, and diagnostics. It does not load CDN
 assets, fonts, scripts, or local sidecar files, so it can be opened directly in
 restricted intranet environments.
 
+`task_insight.json` and `task_insight.html` are the task-insight workbench
+artifacts. `task_insight.json` normalizes `lineage.json`, `profile.json`, and
+`diagnostics.json` into a stable object/link model for tasks, scopes, columns,
+tables, rules, business sections, diagnostics, and evidence. `task_insight.html`
+uses that model to provide linked business stages, Scope DAG, rules, field
+lineage, metadata, and evidence chains in one offline page.
+
 Mermaid files are intended for visual inspection and debugging.
 
 ## How It Works
@@ -297,7 +316,8 @@ SQL
   -> expand SELECT * when schema is available
   -> build scope graph and diagnostics
   -> derive compact scope profile and end-to-end physical lineage
-  -> render JSON / HTML / Mermaid / Markdown
+  -> derive task-insight objects and links
+  -> render JSON / HTML / Mermaid / Markdown / task-insight workbench
   -> audit output consistency
 ```
 

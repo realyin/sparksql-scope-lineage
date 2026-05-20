@@ -9,6 +9,13 @@ from .schema_metadata import (
     table_details_for_table,
 )
 from .html_report import render_html, write_html_report, write_html_report_from_dir
+from .insight_builder import build_task_insight
+from .insight_report import (
+    render_task_insight_html,
+    write_task_insight_files,
+    write_task_insight_report,
+    write_task_insight_report_from_dir,
+)
 from .scope_types import (
     ScopeColumn,
     ScopeData,
@@ -68,6 +75,11 @@ __all__ = [
     "render_html",
     "write_html_report",
     "write_html_report_from_dir",
+    "build_task_insight",
+    "render_task_insight_html",
+    "write_task_insight_files",
+    "write_task_insight_report",
+    "write_task_insight_report_from_dir",
     "run_task",
     "safe_id",
     "scope_overview_mmd",
