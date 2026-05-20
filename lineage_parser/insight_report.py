@@ -313,6 +313,51 @@ function graphNodes() {
   return scopes.concat(tables);
 }
 
+function layoutDag(nodes) {
+  const ids = new Set(nodes.map(n => n.id));
+  const rank = Object.fromEntries(nodes.map(n => [n.id, 0]));
+  const feedEdges = links.filter(l => l.type === "feeds" && ids.has(l.from) && ids.has(l.to));
+  for (let i = 0; i < nodes.length + 1; i += 1) {
+    let changed = false;
+    for (const edge of feedEdges) {
+      const nextRank = (rank[edge.from] || 0) + 1;
+      if (nextRank > (rank[edge.to] || 0)) {
+        rank[edge.to] = nextRank;
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  const levels = new Map();
+  for (const node of nodes) {
+    const level = rank[node.id] || 0;
+    if (!levels.has(level)) levels.set(level, []);
+    levels.get(level).push(node);
+  }
+  const sortedLevels = [...levels.keys()].sort((a, b) => a - b);
+  const cellW = 220;
+  const cellH = 76;
+  const positions = {};
+  let maxRows = 1;
+  for (const level of sortedLevels) {
+    const levelNodes = levels.get(level).sort((a, b) => {
+      const aTable = a.type === "table" ? 0 : 1;
+      const bTable = b.type === "table" ? 0 : 1;
+      return aTable - bTable || String(a.name || a.label || a.id).localeCompare(String(b.name || b.label || b.id));
+    });
+    maxRows = Math.max(maxRows, levelNodes.length);
+    levelNodes.forEach((node, row) => {
+      positions[node.id] = { x: 24 + level * cellW, y: 32 + row * cellH };
+    });
+  }
+  return {
+    positions,
+    cellW,
+    width: Math.max(700, 70 + (Math.max(...sortedLevels, 0) + 1) * cellW),
+    height: Math.max(360, 80 + maxRows * cellH),
+  };
+}
+
 function viewportTransform(name) {
   const v = state.views[name];
   return `translate(${v.x} ${v.y}) scale(${v.k})`;
@@ -362,6 +407,7 @@ function setupGraphPanZoom(svgId, name) {
   }, { passive: false });
   svg.addEventListener("pointerdown", event => {
     if (event.button !== 0) return;
+    if (event.target.closest?.("[data-id]")) return;
     svg.setPointerCapture(event.pointerId);
     svg.classList.add("dragging");
     state.dragging = { name, pointerId: event.pointerId, x: event.clientX, y: event.clientY };
@@ -387,6 +433,12 @@ function setupGraphPanZoom(svgId, name) {
     state.dragging = null;
     svg.classList.remove("dragging");
   });
+  if (name === "scope") {
+    svg.addEventListener("click", event => {
+      const target = event.target.closest?.("[data-id]");
+      if (target) selectObject(target.dataset.id, target.dataset.type);
+    });
+  }
 }
 
 function renderScopeGraph() {
@@ -394,16 +446,8 @@ function renderScopeGraph() {
   const nodes = graphNodes();
   const q = (document.getElementById("scopeSearch").value || "").toLowerCase();
   const visible = nodes.filter(n => !q || JSON.stringify(n).toLowerCase().includes(q));
-  const cols = 4;
-  const w = Math.max(svg.clientWidth || 700, 700);
-  const cellW = Math.max(170, Math.floor((w - 50) / cols));
-  const cellH = 86;
-  const positions = {};
-  visible.forEach((n, i) => {
-    positions[n.id] = {x: 24 + (i % cols) * cellW, y: 32 + Math.floor(i / cols) * cellH};
-  });
-  const height = Math.max(360, 80 + Math.ceil(visible.length / cols) * cellH);
-  svg.setAttribute("viewBox", `0 0 ${w} ${height}`);
+  const { positions, cellW, width, height } = layoutDag(visible);
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   const highlightIds = highlightSet();
   let body = "";
   for (const link of links.filter(l => l.type === "feeds")) {
@@ -422,7 +466,6 @@ function renderScopeGraph() {
     </g>`;
   }
   svg.innerHTML = `<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#9aa8bb"></path></marker></defs><g id="scopeViewport" transform="${viewportTransform("scope")}">${body}</g>`;
-  svg.querySelectorAll("[data-id]").forEach(el => el.addEventListener("click", () => selectObject(el.dataset.id, el.dataset.type)));
 }
 
 function renderColumns() {
