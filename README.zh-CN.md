@@ -310,6 +310,7 @@ SQL
 - [原理说明](docs/how-it-works.zh-CN.md)
 - [Schema 元数据](docs/schema-metadata.md)
 - [profile.json 生成和使用说明](docs/profile-json-generation-and-usage.zh-CN.md)
+- [profile.json 业务语义还原设计方案](docs/profile-json-business-semantics-design.zh-CN.md)
 - [任务理解工作台设计方案](docs/task-insight-workbench-design.zh-CN.md)
 - [任务理解工作台验证方案](docs/task-insight-validation-plan.zh-CN.md)
 - [LLM Profile 使用指南](docs/llm-profile-guide.zh-CN.md)
