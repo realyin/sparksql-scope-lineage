@@ -36,6 +36,10 @@ _schema_cache: dict | None = None
 
 PROFILE_MAX_EXPRESSION_CHARS = 200
 PROFILE_MAX_METADATA_COLUMNS_PER_TABLE = 5
+PROFILE_MAX_SEMANTIC_COLUMNS_PER_TABLE = 12
+PROFILE_MAX_SEMANTIC_OUTPUT_LINEAGE = 80
+PROFILE_MAX_SEMANTIC_SOURCE_COLUMNS = 2
+PROFILE_MAX_SEMANTIC_CONDITION_FIELDS = 8
 PROFILE_MAX_PHYSICAL_SOURCES_PER_COLUMN = 5
 PROFILE_MAX_LOGIC_ITEMS_PER_TYPE = 10
 PROFILE_MAX_WARNINGS = 20
@@ -45,6 +49,7 @@ PROFILE_MAX_FILTERS_SUMMARY = 30
 PROFILE_MAX_EXPRESSION_CATALOG = 30
 PROFILE_MAX_BUSINESS_RULE_CANDIDATES = 12
 PROFILE_MAX_BUSINESS_RULE_FIELDS = 12
+PROFILE_MAX_CONDITION_GROUPS_PER_RULE = 20
 PROFILE_MAX_BUSINESS_SECTIONS = 12
 PROFILE_MAX_SECTION_CONDITIONS = 6
 PROFILE_TARGET_MAX_BYTES = 80 * 1024
@@ -174,6 +179,7 @@ def _compact_profile(profile: dict) -> dict:
     _compact_scope_profile(profile.get("scope_profile", {}))
     _compact_business_rule_candidates(profile.get("business_rule_candidates", []))
     _compact_business_profile(profile.get("business_profile", {}))
+    _compact_semantic_profile(profile.get("semantic_profile", {}))
     _compact_list_field(profile, "filters_summary", PROFILE_MAX_FILTERS_SUMMARY)
     _compact_list_field(profile, "expression_catalog", PROFILE_MAX_EXPRESSION_CATALOG)
     _compact_list_field(profile, "business_rule_candidates", PROFILE_MAX_BUSINESS_RULE_CANDIDATES)
@@ -194,6 +200,12 @@ def _build_llm_profile_indexes(profile: dict, full: dict | None = None) -> dict:
     output_columns = [item.get("column") for item in end_to_end if item.get("column")]
     business_rule_candidates = _build_business_rule_candidates(full or {}, profile)
     business_profile = _build_business_profile(profile, business_rule_candidates)
+    enriched_profile = {
+        **profile,
+        "business_rule_candidates": business_rule_candidates,
+        "business_profile": business_profile,
+    }
+    semantic_profile = _build_semantic_profile(enriched_profile, full or {})
     return {
         "summary": _build_profile_summary(profile, operations, output_columns),
         "grain": _infer_grain(end_to_end, steps),
@@ -202,8 +214,10 @@ def _build_llm_profile_indexes(profile: dict, full: dict | None = None) -> dict:
         "filters_summary": _build_filters_summary(steps),
         "business_rule_candidates": business_rule_candidates,
         "business_profile": business_profile,
+        "semantic_profile": semantic_profile,
         "read_order": [
             "summary",
+            "semantic_profile",
             "business_profile",
             "grain",
             "scope_profile.steps",
@@ -418,6 +432,538 @@ def _build_business_profile(profile: dict, business_rule_candidates: list[dict])
         },
         "sections": _business_sections(profile, business_rule_candidates),
     }
+
+
+def _build_semantic_profile(profile: dict, full: dict) -> dict:
+    return {
+        "version": "2.0",
+        "task": _semantic_task(profile, full),
+        "business_summary": _semantic_business_summary(profile),
+        "tables": _semantic_tables(profile),
+        "process": _semantic_process(profile),
+        "rules": _semantic_rules(profile),
+        "fields": _semantic_fields(profile),
+        "quality": _semantic_quality(profile, full),
+    }
+
+
+def _semantic_task(profile: dict, full: dict) -> dict:
+    target_table = profile.get("target_table")
+    stmt_kind = profile.get("stmt_kind")
+    return {
+        "task_name": profile.get("task_name"),
+        "stmt_kind": stmt_kind,
+        "statement_count": 1,
+        "source_table_count": len(profile.get("source_tables") or []),
+        "target_table_count": 1 if target_table else 0,
+        "target_tables": [
+            {
+                "table": target_table,
+                "table_cn": _table_label(profile.get("related_metadata") or {}, target_table),
+                "write_modes": [stmt_kind] if stmt_kind else [],
+                "statement_ids": [profile.get("task_name")] if profile.get("task_name") else [],
+            }
+        ] if target_table else [],
+    }
+
+
+def _semantic_business_summary(profile: dict) -> dict:
+    objective = (profile.get("business_profile") or {}).get("objective") or {}
+    return {
+        "objective": objective.get("summary") or (profile.get("summary") or {}).get("main_process"),
+        "main_business_object": _table_label(profile.get("related_metadata") or {}, profile.get("target_table")) or profile.get("target_table"),
+        "process_summary": [
+            step.get("business_summary")
+            for step in (profile.get("scope_profile") or {}).get("steps") or []
+            if step.get("business_summary")
+        ][:8],
+        "semantic_confidence": objective.get("confidence") or "low",
+        "evidence": [{"type": "parsed_sql", "source": "profile", "path": "$.summary"}],
+        "inference_notes": [objective.get("note")] if objective.get("note") else [],
+    }
+
+
+def _semantic_tables(profile: dict) -> dict:
+    related = profile.get("related_metadata") or {}
+    return {
+        "inputs": [
+            _semantic_table_item(table, metadata, "input", profile)
+            for table, metadata in (related.get("input_tables") or {}).items()
+        ],
+        "outputs": [
+            _semantic_table_item(table, metadata, "output", profile)
+            for table, metadata in (related.get("output_tables") or {}).items()
+        ],
+    }
+
+
+def _semantic_table_item(table: str, metadata: dict, role: str, profile: dict) -> dict:
+    table_metadata = metadata.get("table_metadata") or {}
+    return {
+        "table": table,
+        "table_cn": table_metadata.get("table_name_cn") or table_metadata.get("table_desc"),
+        "description": table_metadata.get("table_desc"),
+        "role": "主数据来源" if role == "input" else "输出结果表",
+        "used_for": _semantic_table_used_for(table, role, profile),
+        "used_columns": [
+            _semantic_used_column(table, detail, profile)
+            for detail in metadata.get("column_details") or []
+        ],
+        "metadata_complete": metadata.get("metadata_complete"),
+    }
+
+
+def _semantic_table_used_for(table: str, role: str, profile: dict) -> str:
+    if role == "output":
+        return "承载该 SQL 任务写入的结果数据"
+    fields = []
+    for candidate in profile.get("business_rule_candidates") or []:
+        for detail in candidate.get("field_details") or []:
+            if detail.get("table") == table and detail.get("column"):
+                fields.append(detail["column"])
+    if fields:
+        return "提供 " + "、".join(_unique(fields)[:8]) + " 等字段用于规则判断或关联"
+    return "作为任务输入数据来源"
+
+
+def _semantic_used_column(table: str, detail: dict, profile: dict) -> dict:
+    column = detail.get("name")
+    used_in = _column_used_in(table, column, profile)
+    return {
+        "name": column,
+        "type": detail.get("type"),
+        "comment": detail.get("comment"),
+        "used_in": used_in,
+        "business_role": _business_role_for_field(column or "", used_in[0], detail.get("comment")) if used_in else None,
+    }
+
+
+def _column_used_in(table: str, column: str | None, profile: dict) -> list[str]:
+    if not column:
+        return []
+    used: list[str] = []
+    for candidate in profile.get("business_rule_candidates") or []:
+        source = candidate.get("source")
+        role = "join" if source == "JOIN_ON" else "filter"
+        for detail in candidate.get("field_details") or []:
+            if detail.get("table") == table and detail.get("column") == column and role not in used:
+                used.append(role)
+    for item in profile.get("end_to_end_lineage") or []:
+        for source in item.get("physical_sources") or []:
+            if source.get("table") == table and source.get("column") == column and "output_expression" not in used:
+                used.append("output_expression")
+    return used
+
+
+def _semantic_process(profile: dict) -> dict:
+    steps = [
+        _semantic_process_step(step, index)
+        for index, step in enumerate((profile.get("scope_profile") or {}).get("steps") or [])
+    ]
+    return {"step_count": len(steps), "steps": steps}
+
+
+def _semantic_process_step(step: dict, index: int) -> dict:
+    logic = step.get("logic") or {}
+    return {
+        "step_no": index + 1,
+        "statement_id": None,
+        "scope_id": step.get("scope_id"),
+        "scope_name": step.get("name"),
+        "kind": step.get("kind"),
+        "role": step.get("role"),
+        "semantic_role": _semantic_role_for_step(step),
+        "business_object": step.get("business_summary"),
+        "business_summary": step.get("business_summary"),
+        "direct_inputs": step.get("direct_inputs") or [],
+        "direct_source_tables": step.get("direct_source_tables") or [],
+        "upstream_physical_tables": step.get("physical_source_tables") or [],
+        "outputs": {
+            "column_count": step.get("output_columns"),
+            "key_columns": _semantic_step_key_columns(step),
+        },
+        "logic": {
+            "filters": [],
+            "joins": [],
+            "aggregations": logic.get("aggregations") or [],
+            "window_functions": logic.get("window_functions") or [],
+            "case_when": logic.get("case_when") or [],
+            "distinct": logic.get("distinct", False),
+            "union": {"branch_count": logic.get("union_branches")} if logic.get("union_branches") else None,
+            "lateral_views": logic.get("lateral_views") or [],
+        },
+        "key_fields": [],
+        "sql_evidence": [],
+    }
+
+
+def _semantic_role_for_step(step: dict) -> str:
+    role = step.get("role")
+    operations = set(step.get("operations") or [])
+    if role == "aggregate" or "aggregate" in operations:
+        return "汇总生成指标"
+    if role == "dedup" or "window" in operations:
+        return "按业务键排序取值或去重"
+    if role == "union" or "union" in operations:
+        return "合并多路来源或分支"
+    if role == "join" or "join" in operations:
+        return "关联补充上游信息"
+    if role == "filter" or "filter" in operations:
+        return "按条件筛选业务记录"
+    if "case_when" in operations:
+        return "按条件派生分类或标签"
+    return "整理并传递上游字段"
+
+
+def _semantic_step_key_columns(step: dict) -> list[dict]:
+    columns: list[dict] = []
+    for item in (step.get("logic") or {}).get("window_functions") or []:
+        if item.get("column"):
+            columns.append({
+                "name": item.get("column"),
+                "expression": item.get("expression"),
+                "meaning": "窗口函数输出字段",
+            })
+    for item in (step.get("logic") or {}).get("aggregations") or []:
+        if item.get("column"):
+            columns.append({
+                "name": item.get("column"),
+                "expression": item.get("expression"),
+                "meaning": "聚合输出字段",
+            })
+    return columns[:20]
+
+
+def _semantic_rules(profile: dict) -> list[dict]:
+    return [
+        _semantic_rule(candidate, index)
+        for index, candidate in enumerate(profile.get("business_rule_candidates") or [])
+    ]
+
+
+def _semantic_rule(candidate: dict, index: int) -> dict:
+    rule_id = f"rule:{_safe_rule_part(candidate.get('scope_id'))}:{candidate.get('source') or 'RULE'}:{index}"
+    return {
+        "rule_id": rule_id,
+        "statement_id": None,
+        "scope_id": candidate.get("scope_id"),
+        "source": candidate.get("source"),
+        "rule_type": candidate.get("rule_kind"),
+        "business_name": _semantic_rule_name(candidate),
+        "summary": candidate.get("raw_summary"),
+        "condition_groups": _semantic_condition_groups(candidate, rule_id),
+        "key_fields": _semantic_rule_key_fields(candidate),
+        "expression_omitted": candidate.get("expression_omitted", False),
+        "truncated": candidate.get("expression_omitted", False),
+        "evidence": [{"type": "parsed_sql", "source": "profile", "path": f"$.business_rule_candidates[{index}]"}],
+    }
+
+
+def _semantic_rule_name(candidate: dict) -> str:
+    if candidate.get("source") == "JOIN_ON":
+        return "关联条件"
+    rule_kind = candidate.get("rule_kind")
+    if rule_kind == "partition_filter":
+        return "分区/日期过滤"
+    if rule_kind == "soft_delete_filter":
+        return "软删除过滤"
+    return "业务筛选规则"
+
+
+def _safe_rule_part(value: Any) -> str:
+    text = str(value or "global")
+    return text.replace(":", "_").replace("/", "_").replace(" ", "_")
+
+
+def _semantic_condition_groups(candidate: dict, rule_id: str) -> list[dict]:
+    expression = candidate.get("expression") or ""
+    if not expression:
+        return []
+    fragments = _split_condition_fragments(expression)
+    field_details = candidate.get("field_details") or []
+    groups = []
+    for index, fragment in enumerate(fragments[:PROFILE_MAX_CONDITION_GROUPS_PER_RULE]):
+        fields = _fields_in_expression(fragment, field_details)
+        compact, truncated = _truncate_text(fragment, PROFILE_MAX_EXPRESSION_CHARS)
+        groups.append(_drop_none_values({
+            "group_id": f"{rule_id}:g{index + 1:02d}",
+            "name": _condition_group_name(fragment, fields),
+            "expression": compact,
+            "fields": [field.get("column") for field in fields if field.get("column")],
+            "operators": _operator_hints(fragment),
+            "meaning_hint": _meaning_hint_for_condition(fragment, fields),
+            "evidence_type": "parsed_sql",
+            "sql_fragment": compact,
+            "truncated": truncated,
+            "original_length": len(fragment) if truncated else None,
+        }))
+    return groups
+
+
+def _semantic_rule_key_fields(candidate: dict) -> list[dict]:
+    result = []
+    used_in = "join" if candidate.get("source") == "JOIN_ON" else "filter"
+    for detail in candidate.get("field_details") or []:
+        result.append({
+            "field": detail.get("column"),
+            "table": detail.get("table"),
+            "comment": detail.get("comment"),
+            "business_role": _business_role_for_field(detail.get("column") or "", used_in, detail.get("comment")),
+        })
+    return result
+
+
+def _semantic_fields(profile: dict) -> dict:
+    return {
+        "output_lineage": [_semantic_output_field(item, profile) for item in profile.get("end_to_end_lineage") or []],
+        "important_fields": _semantic_important_fields(profile),
+    }
+
+
+def _semantic_output_field(item: dict, profile: dict) -> dict:
+    return {
+        "column": item.get("column"),
+        "comment": _column_metadata(profile.get("related_metadata") or {}, profile.get("target_table"), item.get("column") or "").get("comment"),
+        "expression": item.get("expression"),
+        "transform": item.get("transform"),
+        "scope_id": item.get("scope_id"),
+        "business_role": _business_role_for_field(item.get("column") or "", "output_expression", None),
+        "source_columns": item.get("physical_sources") or [],
+        "trace_complete": item.get("trace_complete", True),
+        "trace_incomplete_reasons": item.get("trace_incomplete_reasons") or [],
+    }
+
+
+def _semantic_important_fields(profile: dict) -> list[dict]:
+    usage: dict[tuple[str | None, str], dict] = {}
+    for candidate in profile.get("business_rule_candidates") or []:
+        used_in = "join" if candidate.get("source") == "JOIN_ON" else "filter"
+        for detail in candidate.get("field_details") or []:
+            _record_field_usage(usage, detail, used_in)
+    target_table = profile.get("target_table")
+    for item in profile.get("important_columns") or []:
+        _record_field_usage(usage, {"table": target_table, "column": item.get("column")}, "output_expression")
+    return list(usage.values())[:40]
+
+
+def _record_field_usage(usage: dict, detail: dict, used_in: str) -> None:
+    column = detail.get("column")
+    if not column:
+        return
+    table = detail.get("table")
+    key = (table, column)
+    item = usage.setdefault(key, {
+        "field": column,
+        "table": table,
+        "comment": detail.get("comment"),
+        "used_in": [],
+        "business_role": _business_role_for_field(column, used_in, detail.get("comment")),
+        "importance_reasons": [],
+        "evidence": [],
+    })
+    if used_in not in item["used_in"]:
+        item["used_in"].append(used_in)
+    reason = f"used_in_{used_in}"
+    if reason not in item["importance_reasons"]:
+        item["importance_reasons"].append(reason)
+
+
+def _business_role_for_field(column: str, used_in: str, comment: str | None = None) -> str:
+    label = comment or column
+    mapping = {
+        "filter": f"{label} 用于筛选或准入/排除判断",
+        "join": f"{label} 用于关联上游或维表",
+        "window_partition": f"{label} 用于窗口分组粒度",
+        "window_order": f"{label} 用于窗口排序，通常决定最新/首次/排名",
+        "case_condition": f"{label} 用于条件分支判断",
+        "output_expression": f"{label} 是输出字段或输出表达式的重要组成",
+    }
+    return mapping.get(used_in, f"{label} 是 SQL 逻辑中的关键字段")
+
+
+def _semantic_quality(profile: dict, full: dict) -> dict:
+    end_to_end = profile.get("end_to_end_lineage") or []
+    incomplete = [item for item in end_to_end if not item.get("trace_complete", True)]
+    diagnostics = profile.get("diagnostics") or {}
+    return {
+        "trace_complete": not incomplete,
+        "trace_incomplete_columns": [
+            {"column": item.get("column"), "reasons": item.get("trace_incomplete_reasons") or []}
+            for item in incomplete
+        ],
+        "schema_coverage": _semantic_schema_coverage(profile),
+        "dangling_scopes": [],
+        "warnings": diagnostics.get("warnings_sample") or [],
+        "known_limits": _semantic_known_limits(profile),
+    }
+
+
+def _semantic_schema_coverage(profile: dict) -> dict:
+    related = profile.get("related_metadata") or {}
+    input_tables = related.get("input_tables") or {}
+    missing = [
+        table
+        for table, metadata in input_tables.items()
+        if metadata.get("metadata_complete") is False
+    ]
+    return {
+        "input_tables_with_metadata": len(input_tables) - len(missing),
+        "input_tables_total": len(input_tables),
+        "missing_metadata_tables": missing,
+    }
+
+
+def _semantic_known_limits(profile: dict) -> list[str]:
+    limits = []
+    diagnostics = profile.get("diagnostics") or {}
+    warning_types = diagnostics.get("warning_types") or {}
+    if "star_not_expanded" in warning_types:
+        limits.append("存在 SELECT * 未完整展开，需要补充 schema 确认字段")
+    if any(item.get("trace_complete") is False for item in profile.get("end_to_end_lineage") or []):
+        limits.append("部分输出字段未完整追溯到物理表字段")
+    if not limits:
+        limits.append("部分业务语义基于字段名、表名和注释推断，需结合业务知识确认")
+    return limits
+
+
+def _split_condition_fragments(expression: str) -> list[str]:
+    text = expression.strip()
+    if not text:
+        return []
+    text = _strip_outer_parens(text)
+    fragments = _split_top_level_or(text)
+    if len(fragments) == 1:
+        fragments = _split_top_level_and(text)
+    flattened: list[str] = []
+    for fragment in fragments:
+        stripped = _strip_outer_parens(fragment.strip())
+        nested_or = _split_top_level_or(stripped)
+        if len(nested_or) > 1:
+            flattened.extend(_strip_outer_parens(item.strip()) for item in nested_or if item.strip(" ()"))
+        else:
+            flattened.append(stripped)
+    return [fragment for fragment in flattened if fragment]
+
+
+def _split_top_level_or(expression: str) -> list[str]:
+    return _split_top_level_keyword(expression, "OR")
+
+
+def _split_top_level_and(expression: str) -> list[str]:
+    return _split_top_level_keyword(expression, "AND")
+
+
+def _split_top_level_keyword(expression: str, keyword: str) -> list[str]:
+    parts: list[str] = []
+    depth = 0
+    quote: str | None = None
+    start = 0
+    upper = expression.upper()
+    i = 0
+    marker = f" {keyword} "
+    while i < len(expression):
+        ch = expression[i]
+        if quote:
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"', "`"):
+            quote = ch
+            i += 1
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(depth - 1, 0)
+        if depth == 0 and upper.startswith(marker, i):
+            parts.append(expression[start:i])
+            i += len(marker)
+            start = i
+            continue
+        i += 1
+    parts.append(expression[start:])
+    return parts
+
+
+def _strip_outer_parens(expression: str) -> str:
+    text = expression.strip()
+    while text.startswith("(") and text.endswith(")") and _outer_parens_wrap_all(text):
+        text = text[1:-1].strip()
+    return text
+
+
+def _outer_parens_wrap_all(expression: str) -> bool:
+    depth = 0
+    quote: str | None = None
+    for index, ch in enumerate(expression):
+        if quote:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"', "`"):
+            quote = ch
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0 and index != len(expression) - 1:
+                return False
+    return depth == 0
+
+
+def _fields_in_expression(expression: str, field_details: list[dict]) -> list[dict]:
+    upper = expression.upper()
+    result = []
+    for field in field_details:
+        column = field.get("column")
+        if column and column.upper() in upper:
+            result.append(field)
+    return result
+
+
+def _condition_group_name(expression: str, fields: list[dict]) -> str:
+    text = expression.lower()
+    field_names = {field.get("column", "").lower() for field in fields}
+    if "dt" in field_names and len(field_names) == 1:
+        return "分区/日期条件"
+    if "dpd" in text or "in_clct_dpd" in field_names:
+        return "DPD/预逾期窗口"
+    if "overdue" in text:
+        return "逾期状态判断"
+    if "product" in text or "product_cd" in field_names:
+        return "产品纳入/排除"
+    if "forced_pay_off" in field_names:
+        return "强制还款/结清标记"
+    if "stmt_delay_ind" in field_names:
+        return "账单延期标记"
+    if "grace_date" in field_names:
+        return "宽限期判断"
+    if "repay_amt" in field_names:
+        return "还款金额判断"
+    if "contra_no" in field_names:
+        return "超额合同命中"
+    return "条件组"
+
+
+def _meaning_hint_for_condition(expression: str, fields: list[dict]) -> str | None:
+    name = _condition_group_name(expression, fields)
+    mapping = {
+        "产品纳入/排除": "按产品码或产品类型控制纳入/排除范围",
+        "DPD/预逾期窗口": "基于 DPD 判断是否进入预逾期或入催窗口",
+        "逾期状态判断": "根据逾期日期或结清状态判断账户是否应纳入",
+        "强制还款/结清标记": "命中强制还款或结清相关标记",
+        "账单延期标记": "命中账单延期标记",
+        "宽限期判断": "根据宽限期和应还金额判断是否保留",
+        "还款金额判断": "根据是否已有还款金额判断是否保留",
+        "超额合同命中": "命中超额放款合同维表",
+    }
+    return mapping.get(name)
+
+
+def _drop_none_values(value: dict) -> dict:
+    return {key: item for key, item in value.items() if item is not None}
 
 
 def _business_sections(profile: dict, business_rule_candidates: list[dict]) -> list[dict]:
@@ -863,6 +1409,129 @@ def _compact_business_profile(business_profile: dict) -> None:
         business_profile["sections_truncated"] = True
 
 
+def _compact_semantic_profile(semantic_profile: dict) -> None:
+    tables = semantic_profile.get("tables") or {}
+    for section in ("inputs", "outputs"):
+        for table in tables.get(section) or []:
+            columns = table.get("used_columns") or []
+            if len(columns) > PROFILE_MAX_SEMANTIC_COLUMNS_PER_TABLE:
+                table["used_columns"] = columns[:PROFILE_MAX_SEMANTIC_COLUMNS_PER_TABLE]
+                table["used_column_count"] = len(columns)
+                table["used_columns_truncated"] = True
+
+    process = semantic_profile.get("process") or {}
+    for step in process.get("steps") or []:
+        outputs = step.get("outputs") or {}
+        key_columns = outputs.get("key_columns") or []
+        if len(key_columns) > PROFILE_MAX_LOGIC_ITEMS_PER_TYPE:
+            outputs["key_columns"] = key_columns[:PROFILE_MAX_LOGIC_ITEMS_PER_TYPE]
+            outputs["key_column_count"] = len(key_columns)
+            outputs["key_columns_truncated"] = True
+        logic = step.get("logic") or {}
+        for key in ("aggregations", "window_functions", "case_when", "lateral_views"):
+            value = logic.get(key)
+            if isinstance(value, list):
+                total = len(value)
+                logic[key] = [_compact_logic_value(item) for item in value[:PROFILE_MAX_LOGIC_ITEMS_PER_TYPE]]
+                if total > PROFILE_MAX_LOGIC_ITEMS_PER_TYPE:
+                    logic[f"{key}_count"] = total
+                    logic[f"{key}_truncated"] = True
+
+    rules = semantic_profile.get("rules") or []
+    if len(rules) > PROFILE_MAX_BUSINESS_RULE_CANDIDATES:
+        semantic_profile["rules"] = rules[:PROFILE_MAX_BUSINESS_RULE_CANDIDATES]
+        semantic_profile["rule_count"] = len(rules)
+        semantic_profile["rules_truncated"] = True
+        rules = semantic_profile["rules"]
+    for rule in rules:
+        fields = rule.get("key_fields") or []
+        if len(fields) > PROFILE_MAX_BUSINESS_RULE_FIELDS:
+            rule["key_fields"] = fields[:PROFILE_MAX_BUSINESS_RULE_FIELDS]
+            rule["key_field_count"] = len(fields)
+            rule["key_fields_truncated"] = True
+        groups = rule.get("condition_groups") or []
+        if len(groups) > PROFILE_MAX_CONDITION_GROUPS_PER_RULE:
+            rule["condition_groups"] = groups[:PROFILE_MAX_CONDITION_GROUPS_PER_RULE]
+            rule["condition_group_count"] = len(groups)
+            rule["condition_groups_truncated"] = True
+        for group in rule.get("condition_groups") or []:
+            fields = group.get("fields") or []
+            if len(fields) > PROFILE_MAX_SEMANTIC_CONDITION_FIELDS:
+                group["fields"] = fields[:PROFILE_MAX_SEMANTIC_CONDITION_FIELDS]
+                group["field_count"] = len(fields)
+                group["fields_truncated"] = True
+            for key in ("expression", "sql_fragment"):
+                value = group.get(key)
+                if isinstance(value, str):
+                    compact, truncated = _truncate_text(value, PROFILE_MAX_EXPRESSION_CHARS)
+                    if truncated:
+                        group[key] = compact
+                        group[f"{key}_length"] = len(value)
+                        group[f"{key}_truncated"] = True
+
+    fields = semantic_profile.get("fields") or {}
+    output_lineage = fields.get("output_lineage") or []
+    if len(output_lineage) > PROFILE_MAX_SEMANTIC_OUTPUT_LINEAGE:
+        fields["output_lineage"] = output_lineage[:PROFILE_MAX_SEMANTIC_OUTPUT_LINEAGE]
+        fields["output_lineage_count"] = len(output_lineage)
+        fields["output_lineage_truncated"] = True
+    for item in fields.get("output_lineage") or []:
+        expression = item.get("expression")
+        if isinstance(expression, str):
+            compact, truncated = _truncate_text(expression, PROFILE_MAX_EXPRESSION_CHARS)
+            if truncated:
+                item["expression"] = compact
+                item["expression_length"] = len(expression)
+                item["expression_truncated"] = True
+        sources = item.get("source_columns") or []
+        if len(sources) > PROFILE_MAX_SEMANTIC_SOURCE_COLUMNS:
+            item["source_columns"] = sources[:PROFILE_MAX_SEMANTIC_SOURCE_COLUMNS]
+            item["source_column_count"] = len(sources)
+            item["source_columns_truncated"] = True
+
+
+def _tighten_semantic_profile(semantic_profile: dict) -> None:
+    process = semantic_profile.get("process") or {}
+    for step in process.get("steps") or []:
+        logic = step.get("logic") or {}
+        for key in ("aggregations", "window_functions", "case_when"):
+            value = logic.get(key)
+            if not isinstance(value, list):
+                continue
+            if len(value) > 3:
+                logic[key] = value[:3]
+                logic[f"{key}_count"] = len(value)
+                logic[f"{key}_truncated"] = True
+            for item in logic.get(key) or []:
+                if isinstance(item, dict) and item.get("expression"):
+                    item["expression_omitted"] = "semantic_large_profile"
+                    item.pop("expression", None)
+
+    rules = semantic_profile.get("rules") or []
+    for rule in rules:
+        groups = rule.get("condition_groups") or []
+        if len(groups) > 12:
+            rule["condition_groups"] = groups[:12]
+            rule["condition_group_count"] = len(groups)
+            rule["condition_groups_truncated"] = True
+        for group in rule.get("condition_groups") or []:
+            fields = group.get("fields") or []
+            if len(fields) > 5:
+                group["fields"] = fields[:5]
+                group["field_count"] = len(fields)
+                group["fields_truncated"] = True
+
+    fields = semantic_profile.get("fields") or {}
+    for item in fields.get("output_lineage") or []:
+        if item.get("transform") == "DIRECT":
+            item.pop("expression", None)
+            item["expression_omitted"] = "direct_mapping"
+        if item.get("source_columns"):
+            item["source_column_count"] = len(item["source_columns"])
+            item["source_columns_omitted"] = True
+            item.pop("source_columns", None)
+
+
 def _compact_rule_fields(rule: dict) -> None:
     fields = rule.get("fields")
     if isinstance(fields, list) and len(fields) > PROFILE_MAX_BUSINESS_RULE_FIELDS:
@@ -923,6 +1592,7 @@ def _enforce_profile_size_budget(profile: dict) -> None:
         return
 
     _tighten_business_layer(profile)
+    _tighten_semantic_profile(profile.get("semantic_profile", {}))
     profile["compact_policy"]["large_profile_compaction"] = True
     if _profile_size(profile) <= PROFILE_TARGET_MAX_BYTES:
         return

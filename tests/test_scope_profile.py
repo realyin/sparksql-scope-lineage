@@ -123,6 +123,7 @@ def test_profile_dict_is_compact_for_llm_preanalysis():
         "related_metadata",
         "summary",
         "business_profile",
+        "semantic_profile",
         "business_rule_candidates",
         "grain",
         "important_columns",
@@ -181,10 +182,10 @@ def test_profile_dict_is_compact_for_llm_preanalysis():
     )
     assert profile["read_order"][:5] == [
         "summary",
+        "semantic_profile",
         "business_profile",
         "grain",
         "scope_profile.steps",
-        "business_rule_candidates",
     ]
     assert "scopes" not in profile
     assert "scope_graph" not in profile
