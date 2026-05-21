@@ -52,7 +52,7 @@ def build_task_insight(
     _add_knowledge(insight, business_knowledge)
     _add_graph_links(insight, lineage, scope_id_map)
     _dedupe_links(insight)
-    _prune_dangling_implementation_scopes(insight)
+    _mark_hidden_implementation_scopes(insight)
     _finalize_task_counts(insight)
     _build_capabilities(insight, business_doc, business_doc_index, business_knowledge)
     return insight
@@ -69,6 +69,7 @@ def _build_task(
     complete_count = sum(1 for item in end_to_end if item.get("trace_complete", True))
     incomplete_count = len(end_to_end) - complete_count
     target_table = profile.get("target_table") or lineage.get("target_table")
+    lineage_scope_count = len(lineage.get("scopes") or {}) or (diagnostics.get("stats") or {}).get("scope_count")
     return {
         "task_id": profile.get("task_name") or lineage.get("task_id"),
         "task_name": (profile.get("task_name") or lineage.get("task_id") or "").split("#")[0],
@@ -78,8 +79,8 @@ def _build_task(
         "summary": summary.get("main_process") or (profile.get("business_profile") or {}).get("objective", {}).get("summary"),
         "input_table_count": summary.get("input_table_count") or len(profile.get("source_tables") or []),
         "output_column_count": summary.get("output_column_count") or len(end_to_end),
-        "scope_count": (diagnostics.get("stats") or {}).get("scope_count"),
-        "lineage_scope_count": (diagnostics.get("stats") or {}).get("scope_count"),
+        "scope_count": lineage_scope_count,
+        "lineage_scope_count": lineage_scope_count,
         "trace_complete_count": complete_count,
         "trace_incomplete_count": incomplete_count,
         "warning_count": diagnostics.get("warning_count", 0),
@@ -227,7 +228,11 @@ def _add_scopes(insight: dict[str, Any], lineage: dict[str, Any], profile: dict[
         }
 
     for scope_key in (lineage.get("scopes") or {}).keys():
-        scope_id_map.setdefault(scope_key, _scope_object_id(_display_scope_name(scope_key)))
+        object_id = _scope_object_id(_display_scope_name(scope_key))
+        existing = insight["objects"]["scopes"].get(object_id)
+        if existing and existing.get("scope_id") != scope_key:
+            object_id = _scope_object_id(scope_key)
+        scope_id_map.setdefault(scope_key, object_id)
 
     for scope_key, scope in (lineage.get("scopes") or {}).items():
         object_id = scope_id_map.get(scope_key)
@@ -543,41 +548,37 @@ def _add_graph_links(insight: dict[str, Any], lineage: dict[str, Any], scope_id_
             _add_link(insight, scope_id, column_id, "produces")
 
 
-def _prune_dangling_implementation_scopes(insight: dict[str, Any]) -> None:
-    """Hide lineage-only implementation scopes that cannot affect the task output graph."""
+def _mark_hidden_implementation_scopes(insight: dict[str, Any]) -> None:
+    """Mark lineage-only implementation scopes hidden in the default business graph."""
 
     scopes = insight["objects"]["scopes"]
     outgoing_feeds = {link["from"] for link in insight["links"] if link["type"] == "feeds"}
-    remove_ids = {
+    hidden_ids = {
         scope_id
         for scope_id, scope in scopes.items()
         if scope.get("profiled") is False
         and scope_id not in outgoing_feeds
     }
-    if not remove_ids:
-        return
-    for scope_id in remove_ids:
-        scopes.pop(scope_id, None)
-    insight["links"] = [
-        link
-        for link in insight["links"]
-        if link.get("from") not in remove_ids and link.get("to") not in remove_ids
-    ]
-    for section in insight["objects"]["sections"].values():
-        if section.get("scope_ids"):
-            section["scope_ids"] = [scope_id for scope_id in section["scope_ids"] if scope_id not in remove_ids]
-    for rule in insight["objects"]["rules"].values():
-        if rule.get("scope_ids"):
-            rule["scope_ids"] = [scope_id for scope_id in rule["scope_ids"] if scope_id not in remove_ids]
+    for scope_id in hidden_ids:
+        scopes[scope_id]["hidden_in_business_view"] = True
+        scopes[scope_id]["hidden_reason"] = "lineage-only scope has no downstream feeds; inspect in full mode because this may indicate parser or SQL lineage issues"
+    insight.setdefault("graph_diagnostics", {})["hidden_business_scope_ids"] = sorted(hidden_ids)
+    insight["graph_diagnostics"]["dangling_scope_ids"] = sorted(hidden_ids)
 
 
 def _finalize_task_counts(insight: dict[str, Any]) -> None:
-    visible_scope_count = len(insight["objects"]["scopes"])
+    visible_scope_count = sum(
+        1 for scope in insight["objects"]["scopes"].values() if not scope.get("hidden_in_business_view")
+    )
+    full_scope_count = len(insight["objects"]["scopes"])
     input_table_count = sum(
         1 for table in insight["objects"]["tables"].values() if table.get("role") == "input"
     )
     insight["task"]["visible_scope_count"] = visible_scope_count
+    insight["task"]["full_graph_scope_count"] = full_scope_count
+    insight["task"]["hidden_scope_count"] = full_scope_count - visible_scope_count
     insight["task"]["dag_node_count"] = visible_scope_count + input_table_count
+    insight["task"]["full_dag_node_count"] = full_scope_count + input_table_count
 
 
 def _scopes_for_column(lineage: dict[str, Any], column_name: str | None, scope_id_map: dict[str, str]) -> list[str]:

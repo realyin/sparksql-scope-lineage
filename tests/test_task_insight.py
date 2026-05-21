@@ -91,6 +91,8 @@ def test_render_task_insight_html_contains_payload_and_workbench_sections():
     assert "字段血缘" in html
     assert "完整scope" in html
     assert "DAG节点" in html
+    assert 'id="graphMode"' in html
+    assert 'id="graphNotice"' in html
     assert 'id="zoomScopeIn"' in html
     assert 'id="resetFieldView"' in html
     assert "layoutDag" in html
@@ -251,5 +253,6 @@ def test_task_insight_prunes_dangling_lineage_only_scopes():
     insight = build_task_insight(lineage=lineage, profile=profile)
 
     assert "scope:kept" in insight["objects"]["scopes"]
-    assert "scope:dangling" not in insight["objects"]["scopes"]
-    assert all("scope:dangling" not in (link["from"], link["to"]) for link in insight["links"])
+    assert insight["objects"]["scopes"]["scope:dangling"]["hidden_in_business_view"] is True
+    assert "scope:dangling" in insight["graph_diagnostics"]["dangling_scope_ids"]
+    assert insight["task"]["hidden_scope_count"] >= 1

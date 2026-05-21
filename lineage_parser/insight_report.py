@@ -117,12 +117,17 @@ def render_task_insight_html(insight: dict[str, Any]) -> str:
         <h2>Scope DAG</h2>
         <div class="toolbar">
           <input id="scopeSearch" placeholder="搜索 scope">
+          <select id="graphMode" title="切换 Scope DAG 展示模式">
+            <option value="business">业务视图</option>
+            <option value="full">完整模式</option>
+          </select>
           <button id="zoomScopeOut" type="button" title="缩小 Scope 图">-</button>
           <button id="zoomScopeIn" type="button" title="放大 Scope 图">+</button>
           <button id="resetScopeView" type="button" title="重置 Scope 图视图">重置</button>
           <button id="clearSelection" type="button">清除选择</button>
         </div>
       </div>
+      <div id="graphNotice" class="graph-notice"></div>
       <svg id="scopeSvg" role="img" aria-label="Scope DAG"></svg>
     </section>
     <aside class="panel detail">
@@ -225,6 +230,7 @@ button:active { transform: translateY(1px); }
 .edge { stroke: #9aa8bb; stroke-width: 1.2; fill: none; marker-end: url(#arrow); }
 .edge.highlight { stroke: var(--blue); stroke-width: 2.4; }
 .node text { font-size: 12px; fill: var(--text); pointer-events: none; }
+.graph-notice { padding: 7px 12px; border-bottom: 1px solid var(--line); background: #fffdf5; color: #7a4d00; font-size: 12px; line-height: 1.35; }
 .detail-box { padding: 12px; overflow: auto; height: calc(100% - 45px); }
 .detail-box dl { display: grid; grid-template-columns: 110px 1fr; gap: 6px 10px; margin: 8px 0; }
 .detail-box dt { color: var(--muted); }
@@ -257,6 +263,7 @@ const state = {
   nodeDragging: null,
   nodeOffsets: {},
   suppressClick: false,
+  graphMode: "business",
 };
 
 const byId = {};
@@ -282,6 +289,7 @@ function renderSummary() {
     ["输出字段", task.output_column_count],
     ["完整scope", task.lineage_scope_count || task.scope_count],
     ["展示scope", task.visible_scope_count],
+    ["隐藏scope", task.hidden_scope_count],
     ["DAG节点", task.dag_node_count],
     ["完整追溯", task.trace_complete_count],
     ["不完整", task.trace_incomplete_count],
@@ -313,9 +321,20 @@ function renderSections() {
 }
 
 function graphNodes() {
-  const scopes = Object.values(objects.scopes || {});
+  const scopes = Object.values(objects.scopes || {}).filter(s => state.graphMode === "full" || !s.hidden_in_business_view);
   const tables = Object.values(objects.tables || {}).filter(t => t.role === "input");
   return scopes.concat(tables);
+}
+
+function renderGraphNotice() {
+  const task = insight.task || {};
+  const diagnostics = insight.graph_diagnostics || {};
+  const hidden = task.hidden_scope_count || 0;
+  const dangling = (diagnostics.dangling_scope_ids || []).length;
+  const text = state.graphMode === "business"
+    ? `业务视图：隐藏 ${hidden} 个 lineage-only/无下游 scope，用于突出主要加工链路。完整血缘仍在 lineage.json，可切换完整模式审计。疑似孤立 scope ${dangling} 个。`
+    : `完整模式：展示工作台模型中的全部 ${task.full_graph_scope_count || task.visible_scope_count || 0} 个 scope。无下游/孤立 scope 通常较少，若存在应检查 SQL 是否未使用该 CTE，或解析器是否漏连。`;
+  document.getElementById("graphNotice").textContent = text;
 }
 
 function layoutDag(nodes) {
@@ -547,6 +566,7 @@ function setupGraphPanZoom(svgId, name) {
 }
 
 function renderScopeGraph() {
+  renderGraphNotice();
   const svg = document.getElementById("scopeSvg");
   const nodes = graphNodes();
   const q = (document.getElementById("scopeSearch").value || "").toLowerCase();
@@ -695,6 +715,11 @@ function renderLogic(item) {
 
 document.getElementById("sectionSearch").addEventListener("input", renderSections);
 document.getElementById("scopeSearch").addEventListener("input", renderScopeGraph);
+document.getElementById("graphMode").addEventListener("change", event => {
+  state.graphMode = event.target.value;
+  state.views.scope.fitted = false;
+  renderScopeGraph();
+});
 document.getElementById("columnSearch").addEventListener("input", renderColumns);
 document.getElementById("traceFilter").addEventListener("change", renderColumns);
 document.getElementById("clearSelection").addEventListener("click", () => selectObject(null, null));
