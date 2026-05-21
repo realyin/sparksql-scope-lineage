@@ -203,8 +203,11 @@ def _add_scopes(insight: dict[str, Any], lineage: dict[str, Any], profile: dict[
     for index, step in enumerate(steps):
         raw_scope_id = step.get("scope_id") or step.get("name") or f"scope_{index}"
         object_id = _scope_object_id(step.get("name") or raw_scope_id)
+        existing = insight["objects"]["scopes"].get(object_id)
+        if existing and existing.get("scope_id") != raw_scope_id:
+            object_id = _scope_object_id(str(raw_scope_id))
         scope_id_map[str(raw_scope_id)] = object_id
-        if step.get("name"):
+        if step.get("name") and step.get("name") not in scope_id_map:
             scope_id_map[str(step["name"])] = object_id
         insight["objects"]["scopes"][object_id] = {
             "id": object_id,
@@ -250,6 +253,7 @@ def _add_scopes(insight: dict[str, Any], lineage: dict[str, Any], profile: dict[
             "business_action": _lineage_business_action(scope, physical_tables),
             "summary": _lineage_business_action(scope, physical_tables),
             "direct_inputs": [_input_object_id(item, scope_id_map) for item in scope.get("depends_on") or []],
+            "direct_source_tables": [_table_id(item) for item in physical_tables],
             "physical_source_tables": [_table_id(item) for item in physical_tables],
             "output_column_count": len(scope.get("columns") or []),
             "logic": _lineage_logic(scope),
@@ -571,9 +575,13 @@ def _finalize_task_counts(insight: dict[str, Any]) -> None:
         1 for scope in insight["objects"]["scopes"].values() if not scope.get("hidden_in_business_view")
     )
     full_scope_count = len(insight["objects"]["scopes"])
+    output_column_count = sum(
+        1 for column in insight["objects"]["columns"].values() if column.get("type") == "output_column"
+    )
     input_table_count = sum(
         1 for table in insight["objects"]["tables"].values() if table.get("role") == "input"
     )
+    insight["task"]["output_column_count"] = output_column_count
     insight["task"]["visible_scope_count"] = visible_scope_count
     insight["task"]["full_graph_scope_count"] = full_scope_count
     insight["task"]["hidden_scope_count"] = full_scope_count - visible_scope_count

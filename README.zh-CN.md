@@ -101,6 +101,13 @@ scope-lineage insight \
 python -m pytest -q
 ```
 
+校验任务理解工作台产物：
+
+```bash
+python tools/validate_task_insight.py --input /tmp/scope-lineage-demo/simple_insert
+python tools/validate_task_insight.py --root /tmp/scope-lineage-demo
+```
+
 ## Python API
 
 ```python
@@ -257,6 +264,9 @@ diagnostics warnings 会输出类型统计和样例。完整细节仍保留在 `
 把 `lineage.json`、`profile.json`、`diagnostics.json` 归一化为稳定的对象和关系模型，
 包含 task、scope、字段、表、规则、业务阶段、诊断和 links。`task_insight.html`
 基于这个模型展示可联动的业务阶段、Scope DAG、规则、字段血缘和证据链。
+可以用 `tools/validate_task_insight.py` 对生成后的 `lineage.json`、`profile.json`、
+`task_insight.json` 和 `task_insight.html` 做交叉校验，检查内容准确性、对象链接、
+业务视图/完整模式统计、HTML 内嵌数据是否一致。
 
 Mermaid 文件主要用于人工检查和调试。
 
@@ -301,6 +311,7 @@ SQL
 - [Schema 元数据](docs/schema-metadata.md)
 - [profile.json 生成和使用说明](docs/profile-json-generation-and-usage.zh-CN.md)
 - [任务理解工作台设计方案](docs/task-insight-workbench-design.zh-CN.md)
+- [任务理解工作台验证方案](docs/task-insight-validation-plan.zh-CN.md)
 - [LLM Profile 使用指南](docs/llm-profile-guide.zh-CN.md)
 - [LLM Profile Prompt 模板](docs/llm-profile-prompt.zh-CN.md)
 - [审计方法](docs/audit-methodology.md)
