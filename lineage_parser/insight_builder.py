@@ -44,14 +44,17 @@ def build_task_insight(
 
     _add_tables(insight, profile)
     scope_id_map = _add_scopes(insight, lineage, profile)
+    _add_missing_graph_tables(insight, lineage)
     _add_columns(insight, profile)
     _add_rules(insight, profile, scope_id_map)
     _add_sections(insight, profile, scope_id_map, business_doc_index)
     _add_diagnostics(insight, diagnostics_data, scope_id_map)
     _add_knowledge(insight, business_knowledge)
     _add_graph_links(insight, lineage, scope_id_map)
-    _build_capabilities(insight, business_doc, business_doc_index, business_knowledge)
     _dedupe_links(insight)
+    _mark_hidden_implementation_scopes(insight)
+    _finalize_task_counts(insight)
+    _build_capabilities(insight, business_doc, business_doc_index, business_knowledge)
     return insight
 
 
@@ -66,6 +69,7 @@ def _build_task(
     complete_count = sum(1 for item in end_to_end if item.get("trace_complete", True))
     incomplete_count = len(end_to_end) - complete_count
     target_table = profile.get("target_table") or lineage.get("target_table")
+    lineage_scope_count = len(lineage.get("scopes") or {}) or (diagnostics.get("stats") or {}).get("scope_count")
     return {
         "task_id": profile.get("task_name") or lineage.get("task_id"),
         "task_name": (profile.get("task_name") or lineage.get("task_id") or "").split("#")[0],
@@ -75,7 +79,8 @@ def _build_task(
         "summary": summary.get("main_process") or (profile.get("business_profile") or {}).get("objective", {}).get("summary"),
         "input_table_count": summary.get("input_table_count") or len(profile.get("source_tables") or []),
         "output_column_count": summary.get("output_column_count") or len(end_to_end),
-        "scope_count": (diagnostics.get("stats") or {}).get("scope_count"),
+        "scope_count": lineage_scope_count,
+        "lineage_scope_count": lineage_scope_count,
         "trace_complete_count": complete_count,
         "trace_incomplete_count": incomplete_count,
         "warning_count": diagnostics.get("warning_count", 0),
@@ -168,14 +173,41 @@ def _add_tables(insight: dict[str, Any], profile: dict[str, Any]) -> None:
             }
 
 
+def _add_missing_graph_tables(insight: dict[str, Any], lineage: dict[str, Any]) -> None:
+    for edge in (lineage.get("scope_graph") or {}).get("edges") or []:
+        for endpoint in (edge.get("from"), edge.get("to")):
+            if not _looks_like_table(endpoint):
+                continue
+            table_id = _table_id(str(endpoint))
+            insight["objects"]["tables"].setdefault(
+                table_id,
+                {
+                    "id": table_id,
+                    "type": "table",
+                    "name": str(endpoint),
+                    "label": str(endpoint),
+                    "description": None,
+                    "layer": None,
+                    "role": "input",
+                    "used_columns": [],
+                    "column_details": [],
+                    "metadata_complete": False,
+                    "evidence": [{"source": "lineage", "path": "$.scope_graph.edges"}],
+                },
+            )
+
+
 def _add_scopes(insight: dict[str, Any], lineage: dict[str, Any], profile: dict[str, Any]) -> dict[str, str]:
     scope_id_map: dict[str, str] = {}
     steps = (profile.get("scope_profile") or {}).get("steps") or []
     for index, step in enumerate(steps):
         raw_scope_id = step.get("scope_id") or step.get("name") or f"scope_{index}"
         object_id = _scope_object_id(step.get("name") or raw_scope_id)
+        existing = insight["objects"]["scopes"].get(object_id)
+        if existing and existing.get("scope_id") != raw_scope_id:
+            object_id = _scope_object_id(str(raw_scope_id))
         scope_id_map[str(raw_scope_id)] = object_id
-        if step.get("name"):
+        if step.get("name") and step.get("name") not in scope_id_map:
             scope_id_map[str(step["name"])] = object_id
         insight["objects"]["scopes"][object_id] = {
             "id": object_id,
@@ -188,6 +220,7 @@ def _add_scopes(insight: dict[str, Any], lineage: dict[str, Any], profile: dict[
             "business_action": _business_action(step),
             "summary": step.get("business_summary"),
             "direct_inputs": [_input_object_id(item, scope_id_map) for item in step.get("direct_inputs") or []],
+            "direct_source_tables": [_table_id(item) for item in step.get("direct_source_tables") or []],
             "physical_source_tables": [_table_id(item) for item in step.get("physical_source_tables") or []],
             "output_column_count": step.get("output_columns"),
             "logic": copy.deepcopy(step.get("logic") or {}),
@@ -198,8 +231,112 @@ def _add_scopes(insight: dict[str, Any], lineage: dict[str, Any], profile: dict[
         }
 
     for scope_key in (lineage.get("scopes") or {}).keys():
-        scope_id_map.setdefault(scope_key, _scope_object_id(_display_scope_name(scope_key)))
+        object_id = _scope_object_id(_display_scope_name(scope_key))
+        existing = insight["objects"]["scopes"].get(object_id)
+        if existing and existing.get("scope_id") != scope_key:
+            object_id = _scope_object_id(scope_key)
+        scope_id_map.setdefault(scope_key, object_id)
+
+    for scope_key, scope in (lineage.get("scopes") or {}).items():
+        object_id = scope_id_map.get(scope_key)
+        if not object_id or object_id in insight["objects"]["scopes"]:
+            continue
+        physical_tables = _lineage_physical_tables(scope)
+        insight["objects"]["scopes"][object_id] = {
+            "id": object_id,
+            "type": "scope",
+            "scope_id": scope_key,
+            "name": _display_scope_name(scope_key),
+            "kind": scope.get("kind"),
+            "role": scope.get("role"),
+            "operations": _lineage_operations(scope),
+            "business_action": _lineage_business_action(scope, physical_tables),
+            "summary": _lineage_business_action(scope, physical_tables),
+            "direct_inputs": [_input_object_id(item, scope_id_map) for item in scope.get("depends_on") or []],
+            "direct_source_tables": [_table_id(item) for item in physical_tables],
+            "physical_source_tables": [_table_id(item) for item in physical_tables],
+            "output_column_count": len(scope.get("columns") or []),
+            "logic": _lineage_logic(scope),
+            "profiled": False,
+            "evidence": [{"source": "lineage", "path": f"$.scopes['{scope_key}']"}],
+        }
     return scope_id_map
+
+
+def _lineage_operations(scope: dict[str, Any]) -> list[str]:
+    operations: list[str] = []
+    kind = scope.get("kind")
+    role = scope.get("role")
+    if kind == "union_branch":
+        operations.append("union_branch")
+    if role and role not in operations:
+        operations.append(str(role))
+    if scope.get("filters"):
+        operations.append("filter")
+    transforms = {str(column.get("transform") or "").upper() for column in scope.get("columns") or []}
+    if "CONDITIONAL" in transforms:
+        operations.append("case_when")
+    if "AGGREGATE" in transforms:
+        operations.append("aggregate")
+    if "WINDOW" in transforms:
+        operations.append("window")
+    return operations
+
+
+def _lineage_physical_tables(scope: dict[str, Any]) -> list[str]:
+    tables: list[str] = []
+    for item in scope.get("depends_on") or []:
+        if _looks_like_table(item) and item not in tables:
+            tables.append(item)
+    for column in scope.get("columns") or []:
+        for source in column.get("sources") or []:
+            source_scope = source.get("scope")
+            if _looks_like_table(source_scope) and source_scope not in tables:
+                tables.append(source_scope)
+    return tables
+
+
+def _lineage_business_action(scope: dict[str, Any], physical_tables: list[str]) -> str:
+    parts: list[str] = []
+    if physical_tables:
+        parts.append("读取 " + ", ".join(physical_tables[:3]) + (" 等物理表" if len(physical_tables) > 3 else ""))
+    if scope.get("kind") == "union_branch":
+        branch_index = scope.get("branch_index")
+        if branch_index is not None:
+            parts.append(f"作为 UNION 第 {int(branch_index) + 1} 个分支")
+        else:
+            parts.append("作为 UNION 分支")
+    if scope.get("filters"):
+        parts.append("按分支条件筛选记录")
+    return "；".join(parts) or "加工中间结果"
+
+
+def _lineage_logic(scope: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "joins": [],
+        "filters": copy.deepcopy(scope.get("filters") or []),
+        "aggregations": [],
+        "window_functions": [],
+        "case_when": _lineage_case_when(scope),
+        "key_renames": [],
+        "distinct": False,
+        "union_branches": 0,
+        "lateral_views": [],
+    }
+
+
+def _lineage_case_when(scope: dict[str, Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for column in scope.get("columns") or []:
+        if column.get("transform") == "CONDITIONAL":
+            items.append(
+                {
+                    "column": column.get("name"),
+                    "summary": "CASE expression",
+                    "branch_count": len(column.get("case_branches") or []),
+                }
+            )
+    return items
 
 
 def _business_action(step: dict[str, Any]) -> str:
@@ -415,6 +552,43 @@ def _add_graph_links(insight: dict[str, Any], lineage: dict[str, Any], scope_id_
             _add_link(insight, scope_id, column_id, "produces")
 
 
+def _mark_hidden_implementation_scopes(insight: dict[str, Any]) -> None:
+    """Mark lineage-only implementation scopes hidden in the default business graph."""
+
+    scopes = insight["objects"]["scopes"]
+    outgoing_feeds = {link["from"] for link in insight["links"] if link["type"] == "feeds"}
+    hidden_ids = {
+        scope_id
+        for scope_id, scope in scopes.items()
+        if scope.get("profiled") is False
+        and scope_id not in outgoing_feeds
+    }
+    for scope_id in hidden_ids:
+        scopes[scope_id]["hidden_in_business_view"] = True
+        scopes[scope_id]["hidden_reason"] = "lineage-only scope has no downstream feeds; inspect in full mode because this may indicate parser or SQL lineage issues"
+    insight.setdefault("graph_diagnostics", {})["hidden_business_scope_ids"] = sorted(hidden_ids)
+    insight["graph_diagnostics"]["dangling_scope_ids"] = sorted(hidden_ids)
+
+
+def _finalize_task_counts(insight: dict[str, Any]) -> None:
+    visible_scope_count = sum(
+        1 for scope in insight["objects"]["scopes"].values() if not scope.get("hidden_in_business_view")
+    )
+    full_scope_count = len(insight["objects"]["scopes"])
+    output_column_count = sum(
+        1 for column in insight["objects"]["columns"].values() if column.get("type") == "output_column"
+    )
+    input_table_count = sum(
+        1 for table in insight["objects"]["tables"].values() if table.get("role") == "input"
+    )
+    insight["task"]["output_column_count"] = output_column_count
+    insight["task"]["visible_scope_count"] = visible_scope_count
+    insight["task"]["full_graph_scope_count"] = full_scope_count
+    insight["task"]["hidden_scope_count"] = full_scope_count - visible_scope_count
+    insight["task"]["dag_node_count"] = visible_scope_count + input_table_count
+    insight["task"]["full_dag_node_count"] = full_scope_count + input_table_count
+
+
 def _scopes_for_column(lineage: dict[str, Any], column_name: str | None, scope_id_map: dict[str, str]) -> list[str]:
     if not column_name:
         return []
@@ -563,7 +737,7 @@ def _display_scope_name(scope_id: str) -> str:
 
 
 def _scope_object_id(name: str) -> str:
-    return f"scope:{_safe_id(_display_scope_name(name))}"
+    return f"scope:{_safe_id(name)}"
 
 
 def _column_id(name: str) -> str:
@@ -588,6 +762,17 @@ def _safe_id(value: Any) -> str:
     text = re.sub(r"\s+", "_", text)
     text = re.sub(r"[^0-9A-Za-z_\-:.]+", "_", text)
     return text.strip("_") or "unknown"
+
+
+def _looks_like_table(value: Any) -> bool:
+    if not value:
+        return False
+    text = str(value)
+    if text == "CONSTANT":
+        return False
+    if text.startswith(("cte:", "subq:", "union:", "ROOT", "scope:")):
+        return False
+    return "." in text
 
 
 def _add_link(insight: dict[str, Any], from_id: str, to_id: str, link_type: str) -> None:

@@ -65,6 +65,7 @@ def test_scope_profile_summarizes_scope_operations_for_llm_use():
         {"column": "channel_name", "summary": "CASE expression with 2 branches", "branch_count": 2}
     ]
     assert base["direct_inputs"] == ["ods.events"]
+    assert base["direct_source_tables"] == ["ods.events"]
     assert base["physical_source_tables"] == ["ods.events"]
 
     agg = _step_by_scope(data, "cte:agg")
@@ -73,7 +74,10 @@ def test_scope_profile_summarizes_scope_operations_for_llm_use():
     assert "aggregate" in agg["operations"]
     assert "ods.calls" in agg["direct_inputs"]
     assert "cte:base" in agg["direct_inputs"]
+    assert agg["direct_source_tables"] == ["ods.calls"]
     assert agg["physical_source_tables"] == ["ods.calls", "ods.events"]
+    assert agg["business_summary"].startswith("读取 ods.calls；")
+    assert "上游可追溯至 ods.events" in agg["business_summary"]
     assert any(j["right"] == "ods.calls" for j in agg["logic"]["joins"])
     assert any(a["column"] == "call_count" for a in agg["logic"]["aggregations"])
 

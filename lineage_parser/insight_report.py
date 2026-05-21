@@ -117,9 +117,17 @@ def render_task_insight_html(insight: dict[str, Any]) -> str:
         <h2>Scope DAG</h2>
         <div class="toolbar">
           <input id="scopeSearch" placeholder="搜索 scope">
+          <select id="graphMode" title="切换 Scope DAG 展示模式">
+            <option value="business">业务视图</option>
+            <option value="full">完整模式</option>
+          </select>
+          <button id="zoomScopeOut" type="button" title="缩小 Scope 图">-</button>
+          <button id="zoomScopeIn" type="button" title="放大 Scope 图">+</button>
+          <button id="resetScopeView" type="button" title="重置 Scope 图视图">重置</button>
           <button id="clearSelection" type="button">清除选择</button>
         </div>
       </div>
+      <div id="graphNotice" class="graph-notice"></div>
       <svg id="scopeSvg" role="img" aria-label="Scope DAG"></svg>
     </section>
     <aside class="panel detail">
@@ -136,6 +144,9 @@ def render_task_insight_html(insight: dict[str, Any]) -> str:
             <option value="COMPLETE">完整追溯</option>
             <option value="INCOMPLETE">追溯不完整</option>
           </select>
+          <button id="zoomFieldOut" type="button" title="缩小字段血缘图">-</button>
+          <button id="zoomFieldIn" type="button" title="放大字段血缘图">+</button>
+          <button id="resetFieldView" type="button" title="重置字段血缘图视图">重置</button>
         </div>
       </div>
       <div class="field-grid">
@@ -200,14 +211,16 @@ h3 { font-size: 14px; margin: 12px 0 6px; }
 .toolbar { display: flex; align-items: center; gap: 8px; }
 input, select, button { height: 30px; border: 1px solid #cfd6e0; border-radius: 6px; background: #fff; color: var(--text); font-size: 13px; padding: 0 8px; }
 button { cursor: pointer; font-weight: 650; }
+button:active { transform: translateY(1px); }
 .list { height: calc(100% - 53px); overflow: auto; padding: 10px; }
 .section-card, .rule-card { border: 1px solid var(--line); border-radius: 7px; padding: 10px; margin-bottom: 9px; cursor: pointer; background: #fff; }
 .section-card:hover, .rule-card:hover, tr:hover { border-color: #9cc7ff; background: #f7fbff; }
 .section-card.selected, .rule-card.selected { border-color: var(--blue); background: #eef6ff; }
 .tag-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
 .tag { font-size: 11px; padding: 2px 6px; border-radius: 999px; color: #344054; background: #f2f4f7; }
-#scopeSvg { width: 100%; height: calc(100% - 53px); display: block; background: #fff; }
-#fieldSvg { width: 100%; min-height: 360px; display: block; background: #fff; border-left: 1px solid var(--line); }
+#scopeSvg { width: 100%; height: calc(100% - 53px); display: block; background: #fff; cursor: grab; touch-action: none; }
+#fieldSvg { width: 100%; min-height: 360px; display: block; background: #fff; border-left: 1px solid var(--line); cursor: grab; touch-action: none; }
+#scopeSvg.dragging, #fieldSvg.dragging { cursor: grabbing; }
 .node rect { fill: #fff; stroke: #9aa8bb; stroke-width: 1.2; rx: 7; }
 .node.scope-root rect { fill: #111827; stroke: #111827; }
 .node.scope-root text { fill: #fff; }
@@ -217,6 +230,7 @@ button { cursor: pointer; font-weight: 650; }
 .edge { stroke: #9aa8bb; stroke-width: 1.2; fill: none; marker-end: url(#arrow); }
 .edge.highlight { stroke: var(--blue); stroke-width: 2.4; }
 .node text { font-size: 12px; fill: var(--text); pointer-events: none; }
+.graph-notice { padding: 7px 12px; border-bottom: 1px solid var(--line); background: #fffdf5; color: #7a4d00; font-size: 12px; line-height: 1.35; }
 .detail-box { padding: 12px; overflow: auto; height: calc(100% - 45px); }
 .detail-box dl { display: grid; grid-template-columns: 110px 1fr; gap: 6px 10px; margin: 8px 0; }
 .detail-box dt { color: var(--muted); }
@@ -237,7 +251,20 @@ _JS = r"""
 const insight = JSON.parse(document.getElementById("task-insight-data").textContent);
 const objects = insight.objects || {};
 const links = insight.links || [];
-const state = { selectedId: null, selectedType: null, selectedColumn: null };
+const state = {
+  selectedId: null,
+  selectedType: null,
+  selectedColumn: null,
+  views: {
+    scope: { x: 0, y: 0, k: 1 },
+    field: { x: 0, y: 0, k: 1 },
+  },
+  dragging: null,
+  nodeDragging: null,
+  nodeOffsets: {},
+  suppressClick: false,
+  graphMode: "business",
+};
 
 const byId = {};
 for (const group of Object.values(objects)) {
@@ -260,7 +287,10 @@ function renderSummary() {
   const chips = [
     ["输入表", task.input_table_count],
     ["输出字段", task.output_column_count],
-    ["scope", task.scope_count],
+    ["完整scope", task.lineage_scope_count || task.scope_count],
+    ["展示scope", task.visible_scope_count],
+    ["隐藏scope", task.hidden_scope_count],
+    ["DAG节点", task.dag_node_count],
     ["完整追溯", task.trace_complete_count],
     ["不完整", task.trace_incomplete_count],
     ["warning", task.warning_count],
@@ -291,45 +321,280 @@ function renderSections() {
 }
 
 function graphNodes() {
-  const scopes = Object.values(objects.scopes || {});
+  const scopes = Object.values(objects.scopes || {}).filter(s => state.graphMode === "full" || !s.hidden_in_business_view);
   const tables = Object.values(objects.tables || {}).filter(t => t.role === "input");
   return scopes.concat(tables);
 }
 
+function renderGraphNotice() {
+  const task = insight.task || {};
+  const diagnostics = insight.graph_diagnostics || {};
+  const hidden = task.hidden_scope_count || 0;
+  const dangling = (diagnostics.dangling_scope_ids || []).length;
+  const text = state.graphMode === "business"
+    ? `业务视图：隐藏 ${hidden} 个 lineage-only/无下游 scope，用于突出主要加工链路。完整血缘仍在 lineage.json，可切换完整模式审计。疑似孤立 scope ${dangling} 个。`
+    : `完整模式：展示工作台模型中的全部 ${task.full_graph_scope_count || task.visible_scope_count || 0} 个 scope。无下游/孤立 scope 通常较少，若存在应检查 SQL 是否未使用该 CTE，或解析器是否漏连。`;
+  document.getElementById("graphNotice").textContent = text;
+}
+
+function layoutDag(nodes) {
+  const ids = new Set(nodes.map(n => n.id));
+  const sourceOrder = Object.fromEntries(nodes.map((node, index) => [node.id, index]));
+  const rank = Object.fromEntries(nodes.map(n => [n.id, 0]));
+  const feedEdges = links.filter(l => l.type === "feeds" && ids.has(l.from) && ids.has(l.to));
+  for (let i = 0; i < nodes.length + 1; i += 1) {
+    let changed = false;
+    for (const edge of feedEdges) {
+      const nextRank = (rank[edge.from] || 0) + 1;
+      if (nextRank > (rank[edge.to] || 0)) {
+        rank[edge.to] = nextRank;
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  const levels = new Map();
+  for (const node of nodes) {
+    const level = rank[node.id] || 0;
+    if (!levels.has(level)) levels.set(level, []);
+    levels.get(level).push(node);
+  }
+  const sortedLevels = [...levels.keys()].sort((a, b) => a - b);
+  const levelIndex = Object.fromEntries(sortedLevels.map((level, index) => [level, index]));
+  const cellW = 190;
+  const cellH = 104;
+  let orderById = new Map();
+  for (const level of sortedLevels) {
+    levels.get(level).sort((a, b) => compareGraphNodes(a, b, sourceOrder)).forEach((node, index) => orderById.set(node.id, index));
+  }
+  const connected = new Map(nodes.map(n => [n.id, []]));
+  for (const edge of feedEdges) {
+    connected.get(edge.to)?.push(edge.from);
+    connected.get(edge.from)?.push(edge.to);
+  }
+  for (let pass = 0; pass < 3; pass += 1) {
+    for (const level of sortedLevels.slice(1)) {
+      levels.get(level).sort((a, b) => weightedOrder(a.id, connected, orderById, sourceOrder) - weightedOrder(b.id, connected, orderById, sourceOrder) || compareGraphNodes(a, b, sourceOrder));
+      levels.get(level).forEach((node, index) => orderById.set(node.id, index));
+    }
+    for (const level of sortedLevels.slice(0, -1).reverse()) {
+      levels.get(level).sort((a, b) => weightedOrder(a.id, connected, orderById, sourceOrder) - weightedOrder(b.id, connected, orderById, sourceOrder) || compareGraphNodes(a, b, sourceOrder));
+      levels.get(level).forEach((node, index) => orderById.set(node.id, index));
+    }
+  }
+  const positions = {};
+  let maxRows = 1;
+  for (const level of sortedLevels) {
+    const levelNodes = levels.get(level);
+    maxRows = Math.max(maxRows, levelNodes.length);
+    levelNodes.forEach((node, row) => {
+      const offset = state.nodeOffsets[node.id] || { x: 0, y: 0 };
+      positions[node.id] = { x: 24 + levelIndex[level] * cellW + offset.x, y: 32 + row * cellH + offset.y };
+    });
+  }
+  return {
+    positions,
+    cellW,
+    width: Math.max(700, 70 + sortedLevels.length * cellW),
+    height: Math.max(360, 80 + maxRows * cellH),
+  };
+}
+
+function compareGraphNodes(a, b, sourceOrder = {}) {
+  const aTable = a.type === "table" ? 0 : 1;
+  const bTable = b.type === "table" ? 0 : 1;
+  return aTable - bTable || (sourceOrder[a.id] ?? 0) - (sourceOrder[b.id] ?? 0) || String(a.name || a.label || a.id).localeCompare(String(b.name || b.label || b.id));
+}
+
+function neighborAverage(id, graph, orderById) {
+  const neighbors = graph.get(id) || [];
+  const rows = neighbors.map(n => orderById.get(n)).filter(v => v !== undefined);
+  if (!rows.length) return orderById.get(id) ?? 0;
+  return rows.reduce((sum, value) => sum + value, 0) / rows.length;
+}
+
+function weightedOrder(id, graph, orderById, sourceOrder) {
+  const neighbor = neighborAverage(id, graph, orderById);
+  const original = sourceOrder[id] ?? orderById.get(id) ?? 0;
+  return neighbor * 0.45 + original * 0.55;
+}
+
+function viewportTransform(name) {
+  const v = state.views[name];
+  return `translate(${v.x} ${v.y}) scale(${v.k})`;
+}
+
+function applyViewport(name) {
+  const group = document.getElementById(`${name}Viewport`);
+  if (group) group.setAttribute("transform", viewportTransform(name));
+}
+
+function clampZoom(value) {
+  return Math.max(0.25, Math.min(4, value));
+}
+
+function svgPoint(svg, event) {
+  const rect = svg.getBoundingClientRect();
+  const box = svg.viewBox.baseVal;
+  return {
+    x: box.x + ((event.clientX - rect.left) / Math.max(rect.width, 1)) * box.width,
+    y: box.y + ((event.clientY - rect.top) / Math.max(rect.height, 1)) * box.height,
+  };
+}
+
+function zoomGraph(name, factor, centerEvent) {
+  const svg = document.getElementById(name === "scope" ? "scopeSvg" : "fieldSvg");
+  const view = state.views[name];
+  const oldK = view.k;
+  const newK = clampZoom(oldK * factor);
+  const box = svg.viewBox.baseVal;
+  const point = centerEvent ? svgPoint(svg, centerEvent) : { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  view.x = point.x - ((point.x - view.x) / oldK) * newK;
+  view.y = point.y - ((point.y - view.y) / oldK) * newK;
+  view.k = newK;
+  applyViewport(name);
+}
+
+function resetGraphView(name) {
+  if (name === "scope") {
+    fitGraphView(name);
+    return;
+  }
+  state.views[name] = { x: 0, y: 0, k: 1 };
+  applyViewport(name);
+}
+
+function fitGraphView(name) {
+  const svg = document.getElementById(name === "scope" ? "scopeSvg" : "fieldSvg");
+  const box = svg.viewBox.baseVal;
+  const rect = svg.getBoundingClientRect();
+  const sx = rect.width / Math.max(box.width, 1);
+  const sy = rect.height / Math.max(box.height, 1);
+  const k = clampZoom(Math.min(sx, sy) * 0.94);
+  const viewportW = Math.max(rect.width, 1) / k;
+  const viewportH = Math.max(rect.height, 1) / k;
+  state.views[name] = {
+    x: Math.max(0, (viewportW - box.width) / 2),
+    y: Math.max(0, (viewportH - box.height) / 2),
+    k,
+  };
+  applyViewport(name);
+}
+
+function setupGraphPanZoom(svgId, name) {
+  const svg = document.getElementById(svgId);
+  svg.addEventListener("wheel", event => {
+    event.preventDefault();
+    zoomGraph(name, event.deltaY < 0 ? 1.15 : 1 / 1.15, event);
+  }, { passive: false });
+  svg.addEventListener("pointerdown", event => {
+    if (event.button !== 0) return;
+    const node = event.target.closest?.("[data-id]");
+    if (node && name === "scope") {
+      svg.setPointerCapture(event.pointerId);
+      const point = svgPoint(svg, event);
+      state.nodeDragging = {
+        id: node.dataset.id,
+        type: node.dataset.type,
+        pointerId: event.pointerId,
+        x: point.x,
+        y: point.y,
+        moved: false,
+      };
+      return;
+    }
+    if (node) return;
+    svg.setPointerCapture(event.pointerId);
+    svg.classList.add("dragging");
+    state.dragging = { name, pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+  });
+  svg.addEventListener("pointermove", event => {
+    const nodeDrag = state.nodeDragging;
+    if (nodeDrag && nodeDrag.pointerId === event.pointerId && name === "scope") {
+      const point = svgPoint(svg, event);
+      const view = state.views.scope;
+      const dx = (point.x - nodeDrag.x) / Math.max(view.k, 0.01);
+      const dy = (point.y - nodeDrag.y) / Math.max(view.k, 0.01);
+      if (Math.abs(dx) + Math.abs(dy) > 0.5) {
+        const offset = state.nodeOffsets[nodeDrag.id] || { x: 0, y: 0 };
+        state.nodeOffsets[nodeDrag.id] = { x: offset.x + dx, y: offset.y + dy };
+        nodeDrag.x = point.x;
+        nodeDrag.y = point.y;
+        nodeDrag.moved = true;
+        renderScopeGraph();
+      }
+      return;
+    }
+    const drag = state.dragging;
+    if (!drag || drag.name !== name || drag.pointerId !== event.pointerId) return;
+    const rect = svg.getBoundingClientRect();
+    const box = svg.viewBox.baseVal;
+    state.views[name].x += ((event.clientX - drag.x) / Math.max(rect.width, 1)) * box.width;
+    state.views[name].y += ((event.clientY - drag.y) / Math.max(rect.height, 1)) * box.height;
+    drag.x = event.clientX;
+    drag.y = event.clientY;
+    applyViewport(name);
+  });
+  svg.addEventListener("pointerup", event => {
+    const nodeDrag = state.nodeDragging;
+    if (nodeDrag && nodeDrag.pointerId === event.pointerId) {
+      state.suppressClick = nodeDrag.moved;
+      if (!nodeDrag.moved) selectObject(nodeDrag.id, nodeDrag.type);
+      state.nodeDragging = null;
+      return;
+    }
+    if (state.dragging?.pointerId === event.pointerId) {
+      state.dragging = null;
+      svg.classList.remove("dragging");
+    }
+  });
+  svg.addEventListener("pointercancel", () => {
+    state.dragging = null;
+    state.nodeDragging = null;
+    svg.classList.remove("dragging");
+  });
+  if (name === "scope") {
+    svg.addEventListener("click", event => {
+      if (state.suppressClick) {
+        state.suppressClick = false;
+        return;
+      }
+      const target = event.target.closest?.("[data-id]");
+      if (target) selectObject(target.dataset.id, target.dataset.type);
+    });
+  }
+}
+
 function renderScopeGraph() {
+  renderGraphNotice();
   const svg = document.getElementById("scopeSvg");
   const nodes = graphNodes();
   const q = (document.getElementById("scopeSearch").value || "").toLowerCase();
   const visible = nodes.filter(n => !q || JSON.stringify(n).toLowerCase().includes(q));
-  const cols = 4;
-  const w = Math.max(svg.clientWidth || 700, 700);
-  const cellW = Math.max(170, Math.floor((w - 50) / cols));
-  const cellH = 86;
-  const positions = {};
-  visible.forEach((n, i) => {
-    positions[n.id] = {x: 24 + (i % cols) * cellW, y: 32 + Math.floor(i / cols) * cellH};
-  });
-  const height = Math.max(360, 80 + Math.ceil(visible.length / cols) * cellH);
-  svg.setAttribute("viewBox", `0 0 ${w} ${height}`);
-  const highlightIds = highlightSet();
-  let html = `<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#9aa8bb"></path></marker></defs>`;
+  const { positions, cellW, width, height } = layoutDag(visible);
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  const highlight = scopeHighlightInfo();
+  let body = "";
   for (const link of links.filter(l => l.type === "feeds")) {
     const a = positions[link.from], b = positions[link.to];
     if (!a || !b) continue;
-    const h = highlightIds.has(link.from) || highlightIds.has(link.to) ? " highlight" : "";
-    html += `<path class="edge${h}" d="M${a.x+145},${a.y+24} C${a.x+cellW/2},${a.y+24} ${b.x-cellW/2},${b.y+24} ${b.x},${b.y+24}"/>`;
+    const h = highlight.edges.has(`${link.from}->${link.to}`) ? " highlight" : "";
+    body += `<path class="edge${h}" d="M${a.x+145},${a.y+24} C${a.x+cellW/2},${a.y+24} ${b.x-cellW/2},${b.y+24} ${b.x},${b.y+24}"/>`;
   }
   for (const n of visible) {
     const p = positions[n.id];
-    const cls = ["node", n.type === "table" ? "table" : "", n.kind === "root" || n.name === "ROOT" ? "scope-root" : "", n.kind === "union" ? "union" : "", state.selectedId === n.id ? "selected" : "", highlightIds.has(n.id) ? "highlight" : ""].join(" ");
-    html += `<g class="${cls}" data-id="${esc(n.id)}" data-type="${esc(n.type || "scope")}" transform="translate(${p.x},${p.y})">
+    const cls = ["node", n.type === "table" ? "table" : "", n.kind === "root" || n.name === "ROOT" ? "scope-root" : "", n.kind === "union" ? "union" : "", state.selectedId === n.id ? "selected" : "", highlight.nodes.has(n.id) ? "highlight" : ""].join(" ");
+    body += `<g class="${cls}" data-id="${esc(n.id)}" data-type="${esc(n.type || "scope")}" transform="translate(${p.x},${p.y})">
       <rect width="150" height="48"></rect>
       <text x="10" y="19">${esc((n.name || n.label || n.id).slice(0, 22))}</text>
       <text x="10" y="36">${esc(n.kind || n.role || n.type || "")}</text>
     </g>`;
   }
-  svg.innerHTML = html;
-  svg.querySelectorAll("[data-id]").forEach(el => el.addEventListener("click", () => selectObject(el.dataset.id, el.dataset.type)));
+  svg.innerHTML = `<defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#9aa8bb"></path></marker></defs><g id="scopeViewport" transform="${viewportTransform("scope")}">${body}</g>`;
+  if (!state.views.scope.fitted) {
+    fitGraphView("scope");
+    state.views.scope.fitted = true;
+  }
 }
 
 function renderColumns() {
@@ -356,21 +621,21 @@ function renderFieldGraph() {
   const svg = document.getElementById("fieldSvg");
   const col = byId[state.selectedColumn || state.selectedId];
   if (!col || col.type !== "output_column") {
-    svg.innerHTML = `<text x="18" y="32" fill="#667085">选择 ROOT 输出字段查看字段血缘</text>`;
+    svg.setAttribute("viewBox", "0 0 480 260");
+    svg.innerHTML = `<g id="fieldViewport" transform="${viewportTransform("field")}"><text x="18" y="32" fill="#667085">选择 ROOT 输出字段查看字段血缘</text></g>`;
     return;
   }
   const sources = (col.physical_sources || []).slice(0, 8);
   const width = Math.max(svg.clientWidth || 480, 480);
   const height = Math.max(260, 80 + sources.length * 52);
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  let html = `<defs><marker id="fieldArrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#9aa8bb"></path></marker></defs>`;
-  html += `<g class="node selected" transform="translate(${width-190},${Math.max(24, height/2-24)})"><rect width="165" height="48"></rect><text x="10" y="20">${esc(col.name)}</text><text x="10" y="37">${esc(col.label || col.transform || "")}</text></g>`;
+  let body = `<g class="node selected" transform="translate(${width-190},${Math.max(24, height/2-24)})"><rect width="165" height="48"></rect><text x="10" y="20">${esc(col.name)}</text><text x="10" y="37">${esc(col.label || col.transform || "")}</text></g>`;
   sources.forEach((s, i) => {
     const y = 24 + i * 52;
-    html += `<g class="node table" transform="translate(18,${y})"><rect width="210" height="42"></rect><text x="9" y="18">${esc((s.table || "").slice(0, 30))}</text><text x="9" y="34">${esc(s.column || "")} · ${esc(s.transform || "")}</text></g>`;
-    html += `<path class="edge" marker-end="url(#fieldArrow)" d="M228,${y+21} C${width/2},${y+21} ${width/2},${height/2} ${width-190},${height/2}"/>`;
+    body += `<g class="node table" transform="translate(18,${y})"><rect width="210" height="42"></rect><text x="9" y="18">${esc((s.table || "").slice(0, 30))}</text><text x="9" y="34">${esc(s.column || "")} · ${esc(s.transform || "")}</text></g>`;
+    body += `<path class="edge" marker-end="url(#fieldArrow)" d="M228,${y+21} C${width/2},${y+21} ${width/2},${height/2} ${width-190},${height/2}"/>`;
   });
-  svg.innerHTML = html;
+  svg.innerHTML = `<defs><marker id="fieldArrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#9aa8bb"></path></marker></defs><g id="fieldViewport" transform="${viewportTransform("field")}">${body}</g>`;
 }
 
 function highlightSet() {
@@ -383,6 +648,24 @@ function highlightSet() {
   for (const id of item.rule_ids || []) ids.add(id);
   for (const id of item.column_ids || []) ids.add(id);
   return ids;
+}
+
+function scopeHighlightInfo() {
+  const nodes = new Set();
+  const edges = new Set();
+  if (!state.selectedId) return { nodes, edges };
+  const selected = byId[state.selectedId];
+  if (!selected || !["scope", "table"].includes(selected.type)) return { nodes, edges };
+  nodes.add(state.selectedId);
+  const incident = links.filter(link => link.type === "feeds" && (link.from === state.selectedId || link.to === state.selectedId));
+  if (incident.length <= 6) {
+    for (const link of incident) {
+      nodes.add(link.from);
+      nodes.add(link.to);
+      edges.add(`${link.from}->${link.to}`);
+    }
+  }
+  return { nodes, edges };
 }
 
 function selectObject(id, type) {
@@ -432,9 +715,22 @@ function renderLogic(item) {
 
 document.getElementById("sectionSearch").addEventListener("input", renderSections);
 document.getElementById("scopeSearch").addEventListener("input", renderScopeGraph);
+document.getElementById("graphMode").addEventListener("change", event => {
+  state.graphMode = event.target.value;
+  state.views.scope.fitted = false;
+  renderScopeGraph();
+});
 document.getElementById("columnSearch").addEventListener("input", renderColumns);
 document.getElementById("traceFilter").addEventListener("change", renderColumns);
 document.getElementById("clearSelection").addEventListener("click", () => selectObject(null, null));
+document.getElementById("zoomScopeIn").addEventListener("click", () => zoomGraph("scope", 1.2));
+document.getElementById("zoomScopeOut").addEventListener("click", () => zoomGraph("scope", 1 / 1.2));
+document.getElementById("resetScopeView").addEventListener("click", () => resetGraphView("scope"));
+document.getElementById("zoomFieldIn").addEventListener("click", () => zoomGraph("field", 1.2));
+document.getElementById("zoomFieldOut").addEventListener("click", () => zoomGraph("field", 1 / 1.2));
+document.getElementById("resetFieldView").addEventListener("click", () => resetGraphView("field"));
+setupGraphPanZoom("scopeSvg", "scope");
+setupGraphPanZoom("fieldSvg", "field");
 
 renderSummary();
 renderSections();

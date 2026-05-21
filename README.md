@@ -106,6 +106,13 @@ Run the tests:
 python -m pytest -q
 ```
 
+Validate generated task-insight artifacts:
+
+```bash
+python tools/validate_task_insight.py --input /tmp/scope-lineage-demo/simple_insert
+python tools/validate_task_insight.py --root /tmp/scope-lineage-demo
+```
+
 ## Python API
 
 ```python
@@ -277,6 +284,10 @@ artifacts. `task_insight.json` normalizes `lineage.json`, `profile.json`, and
 tables, rules, business sections, diagnostics, and evidence. `task_insight.html`
 uses that model to provide linked business stages, Scope DAG, rules, field
 lineage, metadata, and evidence chains in one offline page.
+Use `tools/validate_task_insight.py` to cross-check `lineage.json`,
+`profile.json`, `task_insight.json`, and `task_insight.html` for content
+accuracy, object links, business/full graph counts, and embedded HTML payload
+consistency.
 
 Mermaid files are intended for visual inspection and debugging.
 
